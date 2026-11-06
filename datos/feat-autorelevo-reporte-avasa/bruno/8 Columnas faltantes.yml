@@ -1,0 +1,30 @@
+info:
+  name: "Columnas faltantes"
+  type: http
+  seq: 8
+
+http:
+  method: POST
+  url: "{{baseUrl}}/api/importador/{{layout}}"
+  body:
+    type: multipart-form
+    data:
+      - name: "file"
+        type: file
+        value:
+          - "archivos/02-sin-columnas.xlsx"
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        test("res.getStatus() === 400", () => expect(res.getStatus() === 400).to.be.true);
+        test("res.getBody().error.data.length > 0", () => expect(res.getBody().error.data.length > 0).to.be.true);
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

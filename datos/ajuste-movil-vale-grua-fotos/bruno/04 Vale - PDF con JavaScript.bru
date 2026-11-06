@@ -1,0 +1,23 @@
+meta {
+  name: Vale - PDF con JavaScript
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/v2/ajuste-movil/cases/{{caseId}}/tow-vouchers
+  body: multipartForm
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:multipart-form {
+  file: @file(archivos/vale-con-js.pdf)
+}
+
+assert {
+  res.status: eq 400
+}

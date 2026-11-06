@@ -1,0 +1,302 @@
+- generic [ref=f18e5]:
+  - navigation [ref=f18e6]:
+    - generic [ref=f18e7]:
+      - generic [ref=f18e8]:
+        - generic [ref=f18e9] [cursor=pointer]
+        - link [ref=f18e10] [cursor=pointer]:
+          - /url: /management
+      - generic [ref=f18e11]:
+        - generic [ref=f18e12]: 
+        - generic [ref=f18e17] [cursor=pointer]:
+          - img "Conectado" [ref=f18e18]
+          - text: Joshua Morin
+  - generic [ref=f18e19]:
+    - generic:
+      - alertdialog
+    - generic [ref=f18e23]:
+      - button [ref=f18e24] [cursor=pointer]:
+        - strong [ref=f18e25]: Programar
+      - button [ref=f18e26] [cursor=pointer]:
+        - strong [ref=f18e27]: Por Costo Total
+      - button [ref=f18e28] [cursor=pointer]:
+        - strong [ref=f18e29]: Excepción
+      - button [ref=f18e30] [cursor=pointer]:
+        - strong [ref=f18e31]: Escuchar Audios
+      - button [ref=f18e32] [cursor=pointer]:
+        - strong [ref=f18e33]: Evento riesgoso
+      - button [ref=f18e34] [cursor=pointer]:
+        - strong [ref=f18e35]: Posible queja
+      - button [ref=f18e36] [cursor=pointer]:
+        - strong [ref=f18e37]: Servicio por reembolso
+      - button [ref=f18e38] [cursor=pointer]:
+        - strong [ref=f18e39]: Archivos
+      - generic [ref=f18e40]:
+        - button [ref=f18e41] [cursor=pointer]
+        - button [ref=f18e42] [cursor=pointer]
+        - button [ref=f18e43] [cursor=pointer]
+        - button "Siguiente" [ref=f18e44] [cursor=pointer]
+    - generic [ref=f18e45]:
+      - strong
+    - generic [ref=f18e47]:
+      - generic [ref=f18e49]:
+        - generic [ref=f18e50]:
+          - generic [ref=f18e51]:
+            - generic [ref=f18e52]:
+              - generic [ref=f18e53]:
+                - paragraph [ref=f18e54]:
+                  - strong [ref=f18e55]: Datos del Titular
+                - button [ref=f18e56] [cursor=pointer]
+                - button "" [ref=f18e57] [cursor=pointer]
+              - table "Datos del titular" [ref=f18e60]:
+                - rowgroup [ref=f18e61]:
+                  - row [ref=f18e62]:
+                    - cell "Vanesa Pruebas Mex Autos Mty " [ref=f18e63]:
+                      - paragraph [ref=f18e64]:
+                        - strong [ref=f18e65]: Vanesa Pruebas Mex Autos Mty
+                        - generic [ref=f18e66] [cursor=pointer]: 
+                  - row [ref=f18e68]:
+                    - cell [ref=f18e69]:
+                      - paragraph [ref=f18e70]:
+                        - strong [ref=f18e71]: Teléfono
+                      - strong [ref=f18e74] [cursor=pointer]: "******0000"
+                  - row [ref=f18e75]:
+                    - cell [ref=f18e76]:
+                      - paragraph [ref=f18e77]:
+                        - strong [ref=f18e78]: "Email:"
+                      - generic:
+                        - strong
+                  - row [ref=f18e79]:
+                    - cell [ref=f18e80]:
+                      - paragraph [ref=f18e81]:
+                        - strong [ref=f18e82]: "ID: 67608"
+                  - row [ref=f18e83]:
+                    - cell [ref=f18e84]:
+                      - paragraph [ref=f18e85]:
+                        - strong [ref=f18e86]: "Cobertura de Asistencia:"
+                        - text: 40 UMAS por evento. El límite máximo de la presente cobertura será el equivalente a 550 UMA dentro del territorio mexicano y hasta $3,000 Dólares de los Estados Unidos de América cuando se utilice en el extranjero.
+            - generic [ref=f18e87]:
+              - generic [ref=f18e89]:
+                - paragraph [ref=f18e90]:
+                  - strong [ref=f18e91]: "Datos de gestión #67608"
+                - generic [ref=f18e92] [cursor=pointer]
+              - table "Datos de gestion" [ref=f18e95]:
+                - rowgroup [ref=f18e96]:
+                  - row [ref=f18e97]:
+                    - cell [ref=f18e98]:
+                      - paragraph [ref=f18e99]:
+                        - strong [ref=f18e100]: "Operador:"
+                        - text: joshua.morinsalazar@chubb.com
+                  - row [ref=f18e101]:
+                    - cell [ref=f18e102]:
+                      - paragraph [ref=f18e103]:
+                        - strong [ref=f18e104]: "Despachador:"
+                        - text: "---"
+                  - row [ref=f18e105]:
+                    - cell [ref=f18e106]:
+                      - paragraph [ref=f18e107]:
+                        - strong [ref=f18e108]: "Estado / Distrito:"
+                        - text: Monterrey
+          - generic [ref=f18e109]:
+            - generic [ref=f18e110]:
+              - paragraph [ref=f18e113]: Datos de asistencia
+              - table "Datos de asistencia" [ref=f18e115]:
+                - rowgroup [ref=f18e116]:
+                  - row [ref=f18e117]:
+                    - cell [ref=f18e118]:
+                      - paragraph [ref=f18e119]:
+                        - strong [ref=f18e120]: "Producto:"
+                        - text: Asistencia en Viaje
+                    - cell [ref=f18e121]:
+                      - paragraph [ref=f18e122]:
+                        - strong [ref=f18e123]: "Tipo de Servicios:"
+                        - text: Autos Vial
+                  - row [ref=f18e124]:
+                    - cell [ref=f18e125]:
+                      - paragraph [ref=f18e126]:
+                        - strong [ref=f18e127]: "Dependiente no reportado:"
+                        - text: "---"
+                    - cell [ref=f18e128]:
+                      - paragraph [ref=f18e129]:
+                        - strong [ref=f18e130]: "Plan:"
+                        - text: "Asistencia en Viaje : 693"
+                  - row [ref=f18e131]:
+                    - cell [ref=f18e132]:
+                      - paragraph [ref=f18e133]:
+                        - strong [ref=f18e134]: "Número de asistencias consumidas:"
+                        - text: "---"
+                    - cell [ref=f18e135]:
+                      - paragraph [ref=f18e136]:
+                        - strong [ref=f18e137]: "Número de asistencias disponibles:"
+                        - text: "999"
+                  - row [ref=f18e138]:
+                    - cell [ref=f18e139]:
+                      - paragraph [ref=f18e140]:
+                        - text: "# Casos con la misma póliza y ruta en los últimos 30 días:"
+                        - strong [ref=f18e141]: "1"
+            - generic [ref=f18e142]:
+              - paragraph [ref=f18e144]: Servicios adicionales
+              - generic [ref=f18e148]:
+                - paragraph [ref=f18e149]:
+                  - strong [ref=f18e150]: "Tipo de vehiculo:"
+                  - text: Equipo ligero
+                - paragraph [ref=f18e151]:
+                  - strong [ref=f18e152]: "Costo adicional:"
+                - paragraph [ref=f18e153]:
+                  - strong [ref=f18e154]: "Plano:"
+          - generic [ref=f18e155]:
+            - generic [ref=f18e156]:
+              - generic [ref=f18e157]:
+                - paragraph [ref=f18e158]:
+                  - strong [ref=f18e159]: Datos Proveedor
+                - button [ref=f18e160] [cursor=pointer]
+              - table "Datos del proveedor" [ref=f18e162]:
+                - rowgroup [ref=f18e163]:
+                  - row [ref=f18e164]:
+                    - cell [ref=f18e165]:
+                      - paragraph [ref=f18e166]:
+                        - strong [ref=f18e167]: "Servicio:"
+                  - row [ref=f18e168]:
+                    - cell [ref=f18e169]:
+                      - paragraph [ref=f18e170]:
+                        - strong [ref=f18e171]: "Aplica Carta Porte:"
+                        - text: "No"
+            - generic [ref=f18e172]:
+              - paragraph [ref=f18e175]:
+                - strong [ref=f18e176]: "Datos de vehículo:"
+              - table "Datos del vehiculo" [ref=f18e178]:
+                - rowgroup [ref=f18e179]:
+                  - row [ref=f18e180]:
+                    - cell [ref=f18e181]:
+                      - paragraph [ref=f18e182]:
+                        - strong [ref=f18e183]: "Marca de Carro:"
+                        - text: Mazda
+                    - cell [ref=f18e184]:
+                      - paragraph [ref=f18e185]:
+                        - strong [ref=f18e186]: "Línea del Carro:"
+                        - text: "3"
+                  - row [ref=f18e187]:
+                    - cell [ref=f18e188]:
+                      - paragraph [ref=f18e189]:
+                        - strong [ref=f18e190]: "Año del Carro:"
+                        - text: "2010"
+                    - cell [ref=f18e191]:
+                      - paragraph [ref=f18e192]:
+                        - strong [ref=f18e193]: "Placa del Carro:"
+                        - text: stder45rin
+                  - row [ref=f18e194]:
+                    - cell [ref=f18e195]:
+                      - paragraph [ref=f18e196]:
+                        - strong [ref=f18e197]: "Color del Carro:"
+                        - text: Blanco
+                  - row [ref=f18e198]:
+                    - cell [ref=f18e199]:
+                      - paragraph [ref=f18e200]:
+                        - strong [ref=f18e201]: "#Serie:"
+                        - text: 3N1CN7AP4DL898567
+        - generic [ref=f18e204]:
+          - paragraph [ref=f18e206]: Ubicación cliente proveedor
+          - generic [ref=f18e210]:
+            - region "Mapa" [ref=f18e211]
+            - generic [ref=f18e212]:
+              - generic [ref=f18e265]:
+                - generic:
+                  - generic:
+                    - img "Ubicacion Cliente" [ref=f18e267] [cursor=pointer]
+                    - img "Ubicacion Destino" [ref=f18e268] [cursor=pointer]
+              - iframe [aria-hidden] [ref=f18e269]
+      - table "Tabla de estado de la asistencia" [ref=f18e274]:
+        - rowgroup [ref=f18e275]:
+          - row [ref=f18e276]:
+            - cell [ref=f18e277]:
+              - generic [ref=f18e279]:
+                - strong [ref=f18e280]: "Perspectiva del Cliente:"
+                - paragraph
+            - cell [ref=f18e281]:
+              - generic [ref=f18e283]:
+                - strong [ref=f18e284]: "Asignación de proveedor:"
+                - paragraph
+            - cell [ref=f18e285]:
+              - generic [ref=f18e287]:
+                - strong [ref=f18e288]: "Llegada Proveedor (Origen):"
+                - paragraph [ref=f18e289]: 00:00
+            - cell [ref=f18e290]:
+              - generic [ref=f18e292]:
+                - strong [ref=f18e293]: "Llegada Proveedor (Destino):"
+                - paragraph [ref=f18e294]: 00:00
+            - cell [ref=f18e295]:
+              - generic [ref=f18e297]:
+                - strong [ref=f18e298]: "Tiempo Total:"
+                - paragraph
+      - navigation [ref=f18e304]:
+        - list [ref=f18e305]:
+          - listitem [ref=f18e306]:
+            - link "1 Asignar Servicio" [disabled] [ref=f18e307]:
+              - generic [ref=f18e308]: "1"
+              - generic [ref=f18e309]: Asignar Servicio
+          - listitem [ref=f18e310]:
+            - link "2 Asignar Proveedor" [expanded] [ref=f18e311] [cursor=pointer]:
+              - generic [ref=f18e312]: "2"
+              - generic [ref=f18e313]: Asignar Proveedor
+          - listitem [ref=f18e314]:
+            - link "3 Notificar al cliente" [disabled] [ref=f18e315]:
+              - generic [ref=f18e316]: "3"
+              - generic [ref=f18e317]: Notificar al cliente
+          - listitem [ref=f18e318]:
+            - link "4 Llegada del Proveedor (Origen)" [disabled] [ref=f18e319]:
+              - generic [ref=f18e320]: "4"
+              - generic [ref=f18e321]: Llegada del Proveedor (Origen)
+          - listitem [ref=f18e322]:
+            - link "5 Llegada Proveedor (Destino)" [disabled] [ref=f18e323]:
+              - generic [ref=f18e324]: "5"
+              - generic [ref=f18e325]: Llegada Proveedor (Destino)
+          - listitem [ref=f18e326]:
+            - link "6 Cerrar Ticket" [disabled] [ref=f18e327]:
+              - generic [ref=f18e328]: "6"
+              - generic [ref=f18e329]: Cerrar Ticket
+      - generic [ref=f18e332]:
+        - table "Tickets del caso" [ref=f18e334]:
+          - rowgroup [ref=f18e335]:
+            - row [ref=f18e336]:
+              - columnheader [ref=f18e337]
+              - columnheader "Fecha" [ref=f18e338]
+              - columnheader "Usuario" [ref=f18e339]
+              - columnheader "Tipo" [ref=f18e340]
+              - columnheader "Proveedor" [ref=f18e341]
+              - columnheader "Comentario" [ref=f18e342]
+              - columnheader [ref=f18e343]
+          - rowgroup [ref=f18e344]:
+            - row [ref=f18e345]:
+              - cell [ref=f18e346]
+              - cell "19 Oct, 04:07 PM" [ref=f18e347]
+              - cell "k2@asegurosa.com" [ref=f18e348]
+              - cell "Comentario" [ref=f18e349]
+              - cell [ref=f18e350]
+              - cell "Tiempo excedido esperando a la Geocerca. Boleta liberada por K2 para asignación manual." [ref=f18e351]
+              - cell [ref=f18e353]
+            - row [ref=f18e354]:
+              - cell [ref=f18e355]
+              - cell "19 Oct, 04:05 PM" [ref=f18e356]
+              - cell "qonect@token.com" [ref=f18e357]
+              - cell "Comentario" [ref=f18e358]
+              - cell [ref=f18e359]
+              - 'cell "Respuesta Qonect: No existen gruas que cumplan con el tiempo de calidad establecido" [ref=f18e360]'
+              - cell [ref=f18e362]
+            - row [ref=f18e363]:
+              - cell [ref=f18e364]
+              - cell "19 Oct, 04:05 PM" [ref=f18e365]
+              - cell "joshua.morinsalazar@chubb.com" [ref=f18e366]
+              - cell "Asignar Servicio" [ref=f18e367]
+              - cell [ref=f18e368]
+              - cell "QA CDSPC-147 Grua SI sin fecha" [ref=f18e369]
+              - cell [ref=f18e371]
+            - row [ref=f18e372]:
+              - cell [ref=f18e373]
+              - cell "19 Oct, 04:05 PM" [ref=f18e374]
+              - cell "joshua.morinsalazar@chubb.com" [ref=f18e375]
+              - cell "Asignar / Desasignar" [ref=f18e376]
+              - cell [ref=f18e377]
+              - cell "Boleta creada por chat joshua.morinsalazar@chubb.com" [ref=f18e378]
+              - cell [ref=f18e380]
+        - generic [ref=f18e384]:
+          - button [ref=f18e385] [cursor=pointer]
+          - button "Siguiente paso" [ref=f18e386] [cursor=pointer]

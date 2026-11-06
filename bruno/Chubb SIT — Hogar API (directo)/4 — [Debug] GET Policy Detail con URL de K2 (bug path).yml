@@ -1,0 +1,32 @@
+info:
+  name: 4 — [Debug] GET Policy Detail con URL de K2 (bug path)
+  type: http
+  seq: 5
+
+http:
+  method: GET
+  url: "{{chubbSitBase}}/digital.data.middlewareservicespolicy/Policy/Detail?PolicyNumber={{policyNumber}}"
+  headers:
+    - name: Authorization
+      value: Bearer {{accessToken}}
+    - name: apiVersion
+      value: "1"
+  params:
+    - name: PolicyNumber
+      value: "{{policyNumber}}"
+      type: query
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        test('Debe dar 404 (bug en K2)', () => expect(res.getStatus()).to.equal(404));
+        console.log('Este es el path que usa K2 actualmente — confirma el bug del trailing slash');
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

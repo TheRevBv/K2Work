@@ -1,0 +1,21 @@
+{
+  "name": "CDSEBAU-6 ShortLink",
+  "host": "local",
+  "env": "k2",
+  "variables": {"targetUrl": "https://www.google.com/maps?q=19.4326,-99.1332", "code": ""},
+  "docs": "Pruebas del acortador propio (reemplazo de Cuttly). Rama feat/cdsebau-6-shortlink.\nVerificar filas con `bin/k2-sql <perfil> -f datos/cdsebau-6/01-short-links-recientes.sql`.",
+  "defaults": {"method": "POST", "path": "/api/shortlink/test", "body": {"target_url": "{{targetUrl}}"}},
+  "requests": [
+    {"name": "QA-01 Generar link", "docs": "Esperado: 200 con short_url `<dominio>/s/<7 chars>`; guarda code.",
+     "tests": ["res.getStatus() === 200", "/\\/s\\/[A-Za-z0-9_-]{7}$/.test(res.getBody().short_url)"],
+     "script": "const u = res.getBody().short_url; if (u) bru.setVar('code', u.split('/s/')[1]);"},
+    {"name": "QA-02 Redireccion", "method": "GET", "path": "/s/{{code}}", "body": null, "auth": "none", "followRedirects": false,
+     "docs": "Esperado: 302 con Location = targetUrl.",
+     "tests": ["res.getStatus() === 302", "res.getHeader('location') === 'https://www.google.com/maps?q=19.4326,-99.1332'"]},
+    {"name": "QA-03 Codigo inexistente", "method": "GET", "path": "/s/XXXXXXX", "body": null, "auth": "none", "followRedirects": false,
+     "docs": "Esperado: 302 a SYSTEM_URL, sin 500.",
+     "tests": ["res.getStatus() === 302"]},
+    {"name": "QA-04 Sin target_url", "body": {}, "docs": "Esperado: 400 'target_url es requerido'.",
+     "tests": ["res.getStatus() === 400"]}
+  ]
+}

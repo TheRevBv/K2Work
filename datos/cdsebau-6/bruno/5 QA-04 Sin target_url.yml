@@ -1,0 +1,34 @@
+info:
+  name: "QA-04 Sin target_url"
+  type: http
+  seq: 5
+
+http:
+  method: POST
+  url: "{{baseUrl}}/api/shortlink/test"
+  headers:
+    - name: "Content-Type"
+      value: "application/json"
+  body:
+    type: json
+    data: |-
+      {}
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        test("res.getStatus() === 400", () => expect(res.getStatus() === 400).to.be.true);
+
+docs:
+  content: |-
+    Esperado: 400 'target_url es requerido'.
+  type: text/markdown
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

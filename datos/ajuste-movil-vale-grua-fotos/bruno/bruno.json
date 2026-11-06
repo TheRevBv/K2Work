@@ -1,0 +1,6 @@
+{
+  "version": "1",
+  "name": "Ajuste Móvil - vale de grúa y fotos",
+  "type": "collection",
+  "ignore": ["node_modules", ".git"]
+}

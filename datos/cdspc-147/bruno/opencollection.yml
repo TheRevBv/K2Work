@@ -1,0 +1,42 @@
+opencollection: 1.0.0
+
+info:
+  name: "CDSPC-147 grúa programada WA"
+
+request:
+  auth:
+    type: bearer
+    token: "{{k2_token}}"
+  variables:
+    - name: "baseUrl"
+      value: "https://blip-dot-morfeo-dev-321917.ue.r.appspot.com"
+    - name: "user"
+      value: "joshua.morinsalazar@chubb.com"
+    - name: "pass"
+      value: "{{process.env.K2_PASS}}"
+    - name: "clave"
+      value: "CBH"
+    - name: "poliza"
+      value: "MX0072236581"
+    - name: "inciso"
+      value: "1"
+    - name: "fechaYhora"
+      value: "2026-10-22T14:30:00-06:00"
+    - name: "blipUser"
+      value: "chat.whatsappachubb.com"
+    - name: "blipPassword"
+      value: "{{process.env.BLIP_PASS}}"
+    - name: "blipToken"
+      value: ""
+
+docs:
+  content: |-
+    Grúa programada desde WhatsApp (Blip). Payload real de Blip (correo 2026-10-21): `ticket.programado` y `ticket.fechaYhora`.
+    Verificar con `datos/cdspc-147/bruno/verificar.sql` cambiando el case_id. Si responde 'La poliza tiene casos abiertos', cambiar `poliza`.
+  type: text/markdown
+bundled: false
+extensions:
+  bruno:
+    ignore:
+      - node_modules
+      - .git

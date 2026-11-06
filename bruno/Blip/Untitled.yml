@@ -1,0 +1,36 @@
+info:
+  name: create_home_assistance
+  type: http
+  seq: 1
+
+http:
+  method: POST
+  url: "{{baseUrl}}/api/v2/wa/create_home_assistance_case"
+  headers:
+    - name: Authorization
+      value: Bearer {{token}}
+    - name: Content-Type
+      value: application/json
+  body:
+    type: json
+    data: |-
+      {
+        "ClaveId": "",
+        "PolizaId": "{{polizaId}}",
+        "Servicio": 444,
+        "country_phone_code": "52",
+        "phone": "5555555555",
+        "comment": "Prueba controlada de reproduccion",
+        "programado": "SI",
+        "fecha_programada": "2026-08-26T17:00:00"
+      }
+  auth:
+    type: bearer
+    token: "{{k2_token}}"
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

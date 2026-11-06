@@ -1,0 +1,23 @@
+meta {
+  name: Vale - caso ajeno
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/v2/ajuste-movil/cases/{{caseIdAjeno}}/tow-vouchers
+  body: multipartForm
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:multipart-form {
+  file: @file(archivos/vale.pdf)
+}
+
+assert {
+  res.status: eq 403
+}

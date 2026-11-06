@@ -1,0 +1,26 @@
+info:
+  name: Untitled
+  type: http
+  seq: 1
+
+http:
+  method: POST
+  url: https://blip-dot-morfeo-dev-321917.ue.r.appspot.com/api/auth/token
+  headers:
+    - name: Content-Type
+      value: application/json
+  body:
+    type: json
+    data: |-
+      {
+        "email": "telasist.hogar@chubbservicios.com",
+        "password": "<PASSWORD_DEL_USUARIO>"
+      }
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

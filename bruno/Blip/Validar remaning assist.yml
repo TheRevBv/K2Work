@@ -1,0 +1,36 @@
+info:
+  name: Validar remaning assist
+  type: http
+  seq: 3
+
+http:
+  method: POST
+  url: "{{baseUrl}}/api/v2/wa/validate_remaining_assists"
+  headers:
+    - name: Content-Type
+      value: application/json
+  body:
+    type: json
+    data: |-
+      {
+        "ClaveId": "",
+        "PolizaId": "{{policyNumberS6}}",
+        //"50002194",
+        "NumeroInciso": "1",
+        "ticket": {
+          "service_id": 444
+        }
+      }
+  auth: inherit
+
+runtime:
+  variables:
+    - name: policyNumberS6
+      value: CBHMX0072242204
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

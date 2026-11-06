@@ -1,0 +1,1147 @@
+diff --git a/apiserver/ix/apps/importador/conversores.py b/apiserver/ix/apps/importador/conversores.py
+new file mode 100644
+index 00000000..81ba67c5
+--- /dev/null
++++ b/apiserver/ix/apps/importador/conversores.py
+@@ -0,0 +1,64 @@
++from datetime import date, datetime
++from decimal import Decimal, InvalidOperation
++
++from ix.apps.importador.definitions import MAX_ORDEN_NUMERO, PREFIJOS_FORMULA
++from ix.apps.importador.mensajes import MSG_ENTERO, MSG_FECHA, MSG_FORMULA, MSG_NUMERO, MSG_NUMERO_RANGO
++from ix.apps.importador.schemas import TipoColumna
++from ix.apps.importador.utils import redondear
++
++
++def _texto(valor):
++    texto = str(valor).strip()
++    if str(valor).startswith(PREFIJOS_FORMULA) or texto.startswith(PREFIJOS_FORMULA):
++        raise ValueError(MSG_FORMULA)
++    return texto
++
++
++def _numero(valor) -> Decimal:
++    try:
++        numero = Decimal(str(valor).replace(",", "").strip())
++    except InvalidOperation:
++        raise ValueError(MSG_NUMERO)
++    if not numero.is_finite():
++        raise ValueError(MSG_NUMERO)
++    if numero.adjusted() > MAX_ORDEN_NUMERO:
++        raise ValueError(MSG_NUMERO_RANGO)
++    return numero
++
++
++def _decimal(valor):
++    try:
++        return redondear(_numero(valor))
++    except InvalidOperation:
++        raise ValueError(MSG_NUMERO)
++
++
++def _entero(valor):
++    numero = _numero(valor)
++    if numero != numero.to_integral_value():
++        raise ValueError(MSG_ENTERO)
++    return int(numero)
++
++
++def _fecha(valor):
++    if isinstance(valor, datetime):
++        return valor.date()
++    if isinstance(valor, date):
++        return valor
++    texto = str(valor).strip()
++    if len(texto) > 10 and texto[10] not in " T":
++        raise ValueError(MSG_FECHA)
++    try:
++        if len(texto) > 10:
++            return datetime.fromisoformat(texto).date()
++        return date.fromisoformat(texto)
++    except ValueError:
++        raise ValueError(MSG_FECHA)
++
++
++CONVERSORES = {
++    TipoColumna.TEXTO: _texto,
++    TipoColumna.DECIMAL: _decimal,
++    TipoColumna.ENTERO: _entero,
++    TipoColumna.FECHA: _fecha,
++}
+diff --git a/apiserver/ix/apps/importador/definitions.py b/apiserver/ix/apps/importador/definitions.py
+index 7cdd8c70..2cec4430 100644
+--- a/apiserver/ix/apps/importador/definitions.py
++++ b/apiserver/ix/apps/importador/definitions.py
+@@ -1,3 +1,5 @@
++from decimal import Decimal
++
+ API_URI_BASE = "/importador"
+ LOG_PREFIX = "IMPORTADOR -"
+ TAMANO_LOTE = 500
+@@ -6,26 +8,5 @@ MAX_ERRORES_RESPUESTA = 100
+ MAX_BYTES_DESCOMPRIMIDOS = 50 * 1024 * 1024
+ FIRMA_ZIP = b"PK\x03\x04"
+ PREFIJOS_FORMULA = ("=", "+", "-", "@", "\t", "\r")
+-
+-MSG_SIN_ARCHIVO = "Debe proporcionar un archivo en el campo 'file'"
+-MSG_LAYOUT_INEXISTENTE = "Layout de importación no encontrado"
+-MSG_FORMATO = "El archivo debe ser .xlsx o .csv válido"
+-MSG_TAMANO = "El archivo excede el tamaño permitido"
+-MSG_FILAS = "El archivo excede el número de filas permitido"
+-MSG_DESCOMPRESION = "El archivo excede el tamaño descomprimido permitido"
+-MSG_COLUMNAS = "Faltan columnas obligatorias"
+-MSG_FILAS_INVALIDAS = "El archivo tiene filas inválidas; no se importó nada"
+-MSG_ERROR_INTERNO = "No se pudo completar la importación"
+-MSG_FORMULA = "No se permiten fórmulas"
+-MSG_ENTERO = "Entero inválido"
+-MSG_NUMERO = "Número inválido"
+-MSG_NUMERO_RANGO = "Número fuera de rango"
+-MSG_FECHA = "Fecha inválida (AAAA-MM-DD)"
+-MSG_OBLIGATORIO = "Valor obligatorio"
+-MSG_LLAVE_DUPLICADA = "Llave duplicada en el archivo"
+-MSG_COLUMNA_OBLIGATORIA = "Columna obligatoria"
+-MSG_EXCEDE_CARACTERES = "Excede {} caracteres"
+ MAX_ORDEN_NUMERO = 18
+-MSG_SIN_FILA_TOTAL = "El archivo no trae la fila de totales"
+-MSG_TOTALES_NO_CUADRAN = "Los totales del archivo no cuadran con la suma de las filas"
+-MSG_FILA_TOTAL_REPETIDA = "Fila de totales repetida"
++CENTAVOS = Decimal("0.01")
+diff --git a/apiserver/ix/apps/importador/endpoints.py b/apiserver/ix/apps/importador/endpoints.py
+index 222f04a3..c9ced125 100644
+--- a/apiserver/ix/apps/importador/endpoints.py
++++ b/apiserver/ix/apps/importador/endpoints.py
+@@ -2,13 +2,13 @@ from flask import g, request
+ from werkzeug.exceptions import RequestEntityTooLarge
+ 
+ from ix.api import errors, wrappers
+-from ix.apps.importador.definitions import (
+-    API_URI_BASE, MARGEN_MULTIPART, MSG_LAYOUT_INEXISTENTE, MSG_SIN_ARCHIVO, MSG_TAMANO,
+-)
+-from ix.apps.importador.errors import ImportError_
++from ix.apps.importador.definitions import API_URI_BASE, MARGEN_MULTIPART
++from ix.apps.importador.errors import ImportacionError
+ from ix.apps.importador.layouts import LAYOUTS, obtener_layout
++from ix.apps.importador.mensajes import MSG_LAYOUT_INEXISTENTE, MSG_SIN_ARCHIVO, MSG_TAMANO
+ from ix.apps.importador.services import ImportService
+ from ix.config import config
++from ix.tools.utils.http_limits import EntradaLimitada
+ 
+ 
+ def _error(detalle, status, data=None, total_errores=None):
+@@ -29,38 +29,10 @@ def _validar_content_length(layout):
+         _error(MSG_TAMANO, 413)
+ 
+ 
+-class _EntradaLimitada:
+-    """Envuelve wsgi.input y falla al superar el límite cuando no hay Content-Length."""
+-
+-    def __init__(self, flujo, limite):
+-        self._flujo = flujo
+-        self._restante = limite
+-
+-    def _consumir(self, datos):
+-        self._restante -= len(datos)
+-        if self._restante < 0:
+-            raise RequestEntityTooLarge()
+-        return datos
+-
+-    def read(self, tamano=-1):
+-        if tamano is None or tamano < 0:
+-            tamano = self._restante + 1
+-        return self._consumir(self._flujo.read(min(tamano, self._restante + 1)))
+-
+-    def readline(self, tamano=-1):
+-        if tamano is None or tamano < 0:
+-            tamano = self._restante + 1
+-        return self._consumir(self._flujo.readline(min(tamano, self._restante + 1)))
+-
+-    def __iter__(self):
+-        while linea := self.readline():
+-            yield linea
+-
+-
+ def _obtener_archivo(layout):
+     if request.content_length is None:
+         entrada = request.environ["wsgi.input"]
+-        request.environ["wsgi.input"] = _EntradaLimitada(entrada, layout.max_bytes + MARGEN_MULTIPART)
++        request.environ["wsgi.input"] = EntradaLimitada(entrada, layout.max_bytes + MARGEN_MULTIPART)
+     try:
+         return request.files.get("file")
+     except RequestEntityTooLarge:
+@@ -97,7 +69,7 @@ def importar_archivo(layout_key):
+     data = _leer_limitado(archivo, layout.max_bytes)
+     try:
+         resultado = ImportService.importar(layout, archivo.filename, data, g.current_user.id, g.s())
+-    except ImportError_ as e:
++    except ImportacionError as e:
+         _error(e.mensaje, e.status, e.errores, e.total if e.errores else None)
+     return {"success": True, "data": resultado, "error": None}
+ 
+diff --git a/apiserver/ix/apps/importador/errors.py b/apiserver/ix/apps/importador/errors.py
+index e0d4fea6..3267428b 100644
+--- a/apiserver/ix/apps/importador/errors.py
++++ b/apiserver/ix/apps/importador/errors.py
+@@ -2,7 +2,7 @@ from dataclasses import dataclass, asdict
+ from typing import Any
+ 
+ 
+-class ImportError_(Exception):
++class ImportacionError(Exception):
+     """Error de importación con estatus HTTP y detalle por fila opcional."""
+ 
+     def __init__(self, mensaje: str, status: int = 400, errores: list | None = None,
+diff --git a/apiserver/ix/apps/importador/layouts.py b/apiserver/ix/apps/importador/layouts.py
+deleted file mode 100644
+index ed74b00a..00000000
+--- a/apiserver/ix/apps/importador/layouts.py
++++ /dev/null
+@@ -1,107 +0,0 @@
+-from dataclasses import dataclass
+-
+-from ix.apps.importador.validators import CONVERSORES
+-from ix.boletas_informativas.auto_relevo.api.auto_relevo_boleta.auto_relevo_boleta_models import (
+-    AutorelevoContratoRenta,
+-)
+-from ix.config import config
+-
+-
+-@dataclass(frozen=True)
+-class ImportColumn:
+-    header: str
+-    field: str
+-    kind: str
+-    required: bool = False
+-
+-
+-@dataclass(frozen=True)
+-class FilaTotal:
+-    """Fila de totales del archivo: se aparta de la carga y sus sumas se verifican."""
+-
+-    header: str
+-    marca: str
+-    campos: tuple[str, ...]
+-
+-
+-@dataclass(frozen=True)
+-class ImportLayout:
+-    """Define cómo un archivo se convierte en filas de una tabla."""
+-
+-    key: str
+-    model: type
+-    upsert_key: str
+-    columns: tuple
+-    roles: tuple
+-    max_bytes: int
+-    max_rows: int
+-    fila_total: FilaTotal | None = None
+-
+-
+-AVASA_CONTRATOS = ImportLayout(
+-    key="avasa_contratos",
+-    model=AutorelevoContratoRenta,
+-    upsert_key="contract_number",
+-    columns=(
+-        ImportColumn("Contract Number", "contract_number", "text", required=True),
+-        ImportColumn("Numero de Reserva", "numero_reserva", "text"),
+-        ImportColumn("Número de Siniestro o Folio", "siniestro_folio", "text"),
+-        ImportColumn("Días Renta", "dias_renta", "decimal", required=True),
+-        ImportColumn("Total del contrato", "total_contrato", "decimal", required=True),
+-        ImportColumn("Voucher Total", "voucher_total", "decimal", required=True),
+-    ),
+-    roles=(config.ADMIN, config.SUPERVISOR),
+-    max_bytes=5 * 1024 * 1024,
+-    max_rows=20_000,
+-    fila_total=FilaTotal("Número de Siniestro o Folio", "REPORT TOTAL",
+-                         ("dias_renta", "total_contrato", "voucher_total")),
+-)
+-
+-
+-LLAVE_RESERVADA = "layouts"
+-
+-
+-def _validar_fila_total(layout: ImportLayout):
+-    fila_total = layout.fila_total
+-    if fila_total is None:
+-        return
+-    if fila_total.header not in {c.header for c in layout.columns}:
+-        raise ValueError(
+-            f"Layout '{layout.key}': fila_total.header '{fila_total.header}' no es una columna"
+-        )
+-    numericos = {c.field for c in layout.columns if c.kind in ("decimal", "int")}
+-    for campo in fila_total.campos:
+-        if campo not in numericos:
+-            raise ValueError(
+-                f"Layout '{layout.key}': fila_total.campos '{campo}' debe ser una columna "
+-                f"decimal o int"
+-            )
+-
+-
+-def _registrar(*layouts: ImportLayout) -> dict:
+-    registro = {}
+-    for layout in layouts:
+-        if layout.key == LLAVE_RESERVADA:
+-            raise ValueError(f"La llave de layout '{LLAVE_RESERVADA}' está reservada")
+-        for columna in layout.columns:
+-            if columna.kind not in CONVERSORES:
+-                raise ValueError(
+-                    f"Layout '{layout.key}': tipo '{columna.kind}' de la columna "
+-                    f"'{columna.field}' no existe en CONVERSORES"
+-                )
+-        llaves_obligatorias = {c.field for c in layout.columns if c.required}
+-        if layout.upsert_key not in llaves_obligatorias:
+-            raise ValueError(
+-                f"Layout '{layout.key}': upsert_key '{layout.upsert_key}' debe ser una "
+-                f"columna obligatoria"
+-            )
+-        _validar_fila_total(layout)
+-        registro[layout.key] = layout
+-    return registro
+-
+-
+-LAYOUTS = _registrar(AVASA_CONTRATOS)
+-
+-
+-def obtener_layout(key: str):
+-    return LAYOUTS.get(key)
+diff --git a/apiserver/ix/apps/importador/layouts/__init__.py b/apiserver/ix/apps/importador/layouts/__init__.py
+new file mode 100644
+index 00000000..1b5f35d6
+--- /dev/null
++++ b/apiserver/ix/apps/importador/layouts/__init__.py
+@@ -0,0 +1,51 @@
++from ix.apps.importador.conversores import CONVERSORES
++from ix.apps.importador.layouts.avasa import AVASA_CONTRATOS
++from ix.apps.importador.schemas import TIPOS_NUMERICOS, ImportLayout
++
++LLAVE_RESERVADA = "layouts"
++
++
++def _validar_fila_total(layout: ImportLayout):
++    fila_total = layout.fila_total
++    if fila_total is None:
++        return
++    if fila_total.header not in {c.header for c in layout.columns}:
++        raise ValueError(
++            f"Layout '{layout.key}': fila_total.header '{fila_total.header}' no es una columna"
++        )
++    numericos = {c.field for c in layout.columns if c.kind in TIPOS_NUMERICOS}
++    for campo in fila_total.campos:
++        if campo not in numericos:
++            raise ValueError(
++                f"Layout '{layout.key}': fila_total.campos '{campo}' debe ser una columna "
++                f"decimal o int"
++            )
++
++
++def _registrar(*layouts: ImportLayout) -> dict:
++    registro = {}
++    for layout in layouts:
++        if layout.key == LLAVE_RESERVADA:
++            raise ValueError(f"La llave de layout '{LLAVE_RESERVADA}' está reservada")
++        for columna in layout.columns:
++            if columna.kind not in CONVERSORES:
++                raise ValueError(
++                    f"Layout '{layout.key}': tipo '{columna.kind}' de la columna "
++                    f"'{columna.field}' no existe en CONVERSORES"
++                )
++        llaves_obligatorias = {c.field for c in layout.columns if c.required}
++        if layout.upsert_key not in llaves_obligatorias:
++            raise ValueError(
++                f"Layout '{layout.key}': upsert_key '{layout.upsert_key}' debe ser una "
++                f"columna obligatoria"
++            )
++        _validar_fila_total(layout)
++        registro[layout.key] = layout
++    return registro
++
++
++LAYOUTS = _registrar(AVASA_CONTRATOS)
++
++
++def obtener_layout(key: str):
++    return LAYOUTS.get(key)
+diff --git a/apiserver/ix/apps/importador/layouts/avasa.py b/apiserver/ix/apps/importador/layouts/avasa.py
+new file mode 100644
+index 00000000..3ba8dcee
+--- /dev/null
++++ b/apiserver/ix/apps/importador/layouts/avasa.py
+@@ -0,0 +1,24 @@
++from ix.apps.importador.schemas import FilaTotal, ImportColumn, ImportLayout, TipoColumna
++from ix.boletas_informativas.auto_relevo.api.auto_relevo_boleta.auto_relevo_boleta_models import (
++    AutorelevoContratoRenta,
++)
++from ix.config import config
++
++AVASA_CONTRATOS = ImportLayout(
++    key="avasa_contratos",
++    model=AutorelevoContratoRenta,
++    upsert_key="contract_number",
++    columns=(
++        ImportColumn("Contract Number", "contract_number", TipoColumna.TEXTO, required=True),
++        ImportColumn("Numero de Reserva", "numero_reserva", TipoColumna.TEXTO),
++        ImportColumn("Número de Siniestro o Folio", "siniestro_folio", TipoColumna.TEXTO),
++        ImportColumn("Días Renta", "dias_renta", TipoColumna.DECIMAL, required=True),
++        ImportColumn("Total del contrato", "total_contrato", TipoColumna.DECIMAL, required=True),
++        ImportColumn("Voucher Total", "voucher_total", TipoColumna.DECIMAL, required=True),
++    ),
++    roles=(config.ADMIN, config.SUPERVISOR),
++    max_bytes=5 * 1024 * 1024,
++    max_rows=20_000,
++    fila_total=FilaTotal("Número de Siniestro o Folio", "REPORT TOTAL",
++                         ("dias_renta", "total_contrato", "voucher_total")),
++)
+diff --git a/apiserver/ix/apps/importador/mensajes.py b/apiserver/ix/apps/importador/mensajes.py
+new file mode 100644
+index 00000000..1d2597c4
+--- /dev/null
++++ b/apiserver/ix/apps/importador/mensajes.py
+@@ -0,0 +1,21 @@
++MSG_SIN_ARCHIVO = "Debe proporcionar un archivo en el campo 'file'"
++MSG_LAYOUT_INEXISTENTE = "Layout de importación no encontrado"
++MSG_FORMATO = "El archivo debe ser .xlsx o .csv válido"
++MSG_TAMANO = "El archivo excede el tamaño permitido"
++MSG_FILAS = "El archivo excede el número de filas permitido"
++MSG_DESCOMPRESION = "El archivo excede el tamaño descomprimido permitido"
++MSG_COLUMNAS = "Faltan columnas obligatorias"
++MSG_FILAS_INVALIDAS = "El archivo tiene filas inválidas; no se importó nada"
++MSG_ERROR_INTERNO = "No se pudo completar la importación"
++MSG_FORMULA = "No se permiten fórmulas"
++MSG_ENTERO = "Entero inválido"
++MSG_NUMERO = "Número inválido"
++MSG_NUMERO_RANGO = "Número fuera de rango"
++MSG_FECHA = "Fecha inválida (AAAA-MM-DD)"
++MSG_OBLIGATORIO = "Valor obligatorio"
++MSG_LLAVE_DUPLICADA = "Llave duplicada en el archivo"
++MSG_COLUMNA_OBLIGATORIA = "Columna obligatoria"
++MSG_EXCEDE_CARACTERES = "Excede {} caracteres"
++MSG_SIN_FILA_TOTAL = "El archivo no trae la fila de totales"
++MSG_TOTALES_NO_CUADRAN = "Los totales del archivo no cuadran con la suma de las filas"
++MSG_FILA_TOTAL_REPETIDA = "Fila de totales repetida"
+diff --git a/apiserver/ix/apps/importador/parsers.py b/apiserver/ix/apps/importador/parsers.py
+index 74d1f762..43a4ab14 100644
+--- a/apiserver/ix/apps/importador/parsers.py
++++ b/apiserver/ix/apps/importador/parsers.py
+@@ -1,40 +1,33 @@
+ import csv
+ import io
+ import logging
+-import unicodedata
+ import zipfile
+ from typing import Iterator
+ 
+ import openpyxl
+ 
+-from ix.apps.importador.definitions import (
+-    FIRMA_ZIP, LOG_PREFIX, MAX_BYTES_DESCOMPRIMIDOS,
+-    MSG_DESCOMPRESION, MSG_FILAS, MSG_FORMATO,
+-)
+-from ix.apps.importador.errors import ImportError_
++from ix.apps.importador.definitions import FIRMA_ZIP, LOG_PREFIX, MAX_BYTES_DESCOMPRIMIDOS
++from ix.apps.importador.errors import ImportacionError
++from ix.apps.importador.mensajes import MSG_DESCOMPRESION, MSG_FILAS, MSG_FORMATO
++from ix.apps.importador.utils import es_vacio
++from ix.tools.utils.string_helpers import normalizar_encabezado
+ 
+ Filas = Iterator[tuple[int, list]]
+ 
+ 
+-def normalizar_encabezado(valor) -> str:
+-    texto = str(valor or "").replace("\xad", "")
+-    texto = unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode()
+-    return " ".join(texto.split()).lower()
+-
+-
+ def _es_vacia(valores: list) -> bool:
+-    return all(v is None or str(v).strip() == "" for v in valores)
++    return all(es_vacio(v) for v in valores)
+ 
+ 
+-def _error_formato(exc: Exception) -> ImportError_:
++def _error_formato(exc: Exception) -> ImportacionError:
+     logging.warning(f"{LOG_PREFIX} archivo con formato inválido ({type(exc).__name__})")
+-    return ImportError_(MSG_FORMATO)
++    return ImportacionError(MSG_FORMATO)
+ 
+ 
+ def _proteger(filas: Filas) -> Filas:
+     try:
+         yield from filas
+-    except ImportError_:
++    except ImportacionError:
+         raise
+     except Exception as exc:
+         raise _error_formato(exc)
+@@ -43,20 +36,20 @@ def _proteger(filas: Filas) -> Filas:
+ def _limitar(filas: Filas, max_rows: int) -> Filas:
+     for contador, fila in enumerate(filas, start=1):
+         if contador > max_rows:
+-            raise ImportError_(MSG_FILAS)
++            raise ImportacionError(MSG_FILAS)
+         yield fila
+ 
+ 
+ def _validar_zip(data: bytes) -> None:
+     if not data.startswith(FIRMA_ZIP):
+-        raise ImportError_(MSG_FORMATO)
++        raise ImportacionError(MSG_FORMATO)
+     try:
+         with zipfile.ZipFile(io.BytesIO(data)) as z:
+             total = sum(info.file_size for info in z.infolist())
+     except zipfile.BadZipFile:
+-        raise ImportError_(MSG_FORMATO)
++        raise ImportacionError(MSG_FORMATO)
+     if total > MAX_BYTES_DESCOMPRIMIDOS:
+-        raise ImportError_(MSG_DESCOMPRESION)
++        raise ImportacionError(MSG_DESCOMPRESION)
+ 
+ 
+ def _leer_xlsx(data: bytes) -> tuple[list, Filas]:
+@@ -71,7 +64,7 @@ def _leer_csv(data: bytes) -> tuple[list, Filas]:
+     try:
+         texto = data.decode("utf-8-sig")
+     except UnicodeDecodeError:
+-        raise ImportError_(MSG_FORMATO)
++        raise ImportacionError(MSG_FORMATO)
+     lector = csv.reader(io.StringIO(texto))
+     encabezados = next(lector, [])
+     return encabezados, ((n, list(v)) for n, v in enumerate(lector, start=2))
+@@ -83,16 +76,16 @@ LECTORES = {".xlsx": _leer_xlsx, ".csv": _leer_csv}
+ def leer_archivo(filename: str, data: bytes, max_rows: int) -> tuple[list[str], Filas]:
+     """Devuelve encabezados normalizados y un iterador perezoso de filas no vacías.
+ 
+-    Cualquier fallo de formato, en la carga o al consumir el iterador, sale como ImportError_.
++    Cualquier fallo de formato, en la carga o al consumir el iterador, sale como ImportacionError.
+     El límite de filas se aplica al consumir el iterador.
+     """
+     extension = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+     lector = LECTORES.get(extension)
+     if not lector:
+-        raise ImportError_(MSG_FORMATO)
++        raise ImportacionError(MSG_FORMATO)
+     try:
+         encabezados, filas = lector(data)
+-    except ImportError_:
++    except ImportacionError:
+         raise
+     except Exception as exc:
+         raise _error_formato(exc)
+diff --git a/apiserver/ix/apps/importador/schemas.py b/apiserver/ix/apps/importador/schemas.py
+new file mode 100644
+index 00000000..2e5523a6
+--- /dev/null
++++ b/apiserver/ix/apps/importador/schemas.py
+@@ -0,0 +1,43 @@
++from dataclasses import dataclass
++from enum import Enum
++
++
++class TipoColumna(str, Enum):
++    TEXTO = "text"
++    DECIMAL = "decimal"
++    ENTERO = "int"
++    FECHA = "date"
++
++
++TIPOS_NUMERICOS = (TipoColumna.DECIMAL, TipoColumna.ENTERO)
++
++
++@dataclass(frozen=True)
++class ImportColumn:
++    header: str
++    field: str
++    kind: TipoColumna
++    required: bool = False
++
++
++@dataclass(frozen=True)
++class FilaTotal:
++    """Fila de totales del archivo: se aparta de la carga y sus sumas se verifican."""
++
++    header: str
++    marca: str
++    campos: tuple[str, ...]
++
++
++@dataclass(frozen=True)
++class ImportLayout:
++    """Define cómo un archivo se convierte en filas de una tabla."""
++
++    key: str
++    model: type
++    upsert_key: str
++    columns: tuple
++    roles: tuple
++    max_bytes: int
++    max_rows: int
++    fila_total: FilaTotal | None = None
+diff --git a/apiserver/ix/apps/importador/services.py b/apiserver/ix/apps/importador/services.py
+index 8617ef9b..1ecd3b6b 100644
+--- a/apiserver/ix/apps/importador/services.py
++++ b/apiserver/ix/apps/importador/services.py
+@@ -4,8 +4,9 @@ import logging
+ from sqlalchemy import func, select
+ from sqlalchemy.dialects.mysql import insert
+ 
+-from ix.apps.importador.definitions import LOG_PREFIX, MSG_ERROR_INTERNO, MSG_FILAS_INVALIDAS, TAMANO_LOTE
+-from ix.apps.importador.errors import ImportError_
++from ix.apps.importador.definitions import LOG_PREFIX, TAMANO_LOTE
++from ix.apps.importador.errors import ImportacionError
++from ix.apps.importador.mensajes import MSG_ERROR_INTERNO, MSG_FILAS_INVALIDAS
+ from ix.apps.importador.parsers import leer_archivo
+ from ix.apps.importador.validators import mapear_columnas, validar_filas
+ 
+@@ -23,7 +24,7 @@ class ImportService:
+         indices = mapear_columnas(layout, encabezados)
+         registros, errores, total_errores = validar_filas(layout, indices, filas)
+         if total_errores:
+-            raise ImportError_(MSG_FILAS_INVALIDAS, errores=[e.to_dict() for e in errores],
++            raise ImportacionError(MSG_FILAS_INVALIDAS, errores=[e.to_dict() for e in errores],
+                               total=total_errores)
+         return registros
+ 
+@@ -58,7 +59,7 @@ class ImportService:
+         except Exception:
+             session.rollback()
+             logging.exception(f"{LOG_PREFIX} error de BD en layout {layout.key}")
+-            raise ImportError_(MSG_ERROR_INTERNO, status=500)
++            raise ImportacionError(MSG_ERROR_INTERNO, status=500)
+         resultado = {
+             "layout": layout.key,
+             "total": len(registros),
+diff --git a/apiserver/ix/apps/importador/totales.py b/apiserver/ix/apps/importador/totales.py
+new file mode 100644
+index 00000000..82976453
+--- /dev/null
++++ b/apiserver/ix/apps/importador/totales.py
+@@ -0,0 +1,50 @@
++from decimal import Decimal
++
++from ix.apps.importador.conversores import CONVERSORES
++from ix.apps.importador.errors import ImportacionError, RowError
++from ix.apps.importador.mensajes import MSG_OBLIGATORIO, MSG_TOTALES_NO_CUADRAN
++from ix.apps.importador.utils import celda, es_vacio, redondear
++
++
++def _columna(layout, header):
++    return next(c for c in layout.columns if c.header == header)
++
++
++def es_fila_total(layout, indices, valores):
++    fila_total = layout.fila_total
++    if fila_total is None:
++        return False
++    valor = celda(valores, indices.get(_columna(layout, fila_total.header).field))
++    if valor is None:
++        return False
++    return str(valor).strip().casefold() == fila_total.marca.strip().casefold()
++
++
++def leer_totales(layout, indices, numero, valores):
++    """Convierte las celdas de la fila de totales; devuelve totales por campo y errores."""
++    totales, errores = {}, []
++    for columna in layout.columns:
++        if columna.field not in layout.fila_total.campos or columna.field not in indices:
++            continue
++        crudo = celda(valores, indices[columna.field])
++        try:
++            if es_vacio(crudo):
++                raise ValueError(MSG_OBLIGATORIO)
++            totales[columna.field] = redondear(CONVERSORES[columna.kind](crudo))
++        except ValueError as e:
++            errores.append(RowError(numero, columna.header, crudo, str(e)))
++    return totales, errores
++
++
++def verificar_totales(layout, registros, totales):
++    diferencias = []
++    for columna in layout.columns:
++        if columna.field not in totales:
++            continue
++        suma = redondear(sum((Decimal(r[columna.field]) for r in registros if r[columna.field] is not None),
++                             Decimal(0)))
++        if suma != totales[columna.field]:
++            diferencias.append({"columna": columna.header, "esperado": str(totales[columna.field]),
++                                "calculado": str(suma)})
++    if diferencias:
++        raise ImportacionError(MSG_TOTALES_NO_CUADRAN, errores=diferencias)
+diff --git a/apiserver/ix/apps/importador/utils.py b/apiserver/ix/apps/importador/utils.py
+new file mode 100644
+index 00000000..34eea4ae
+--- /dev/null
++++ b/apiserver/ix/apps/importador/utils.py
+@@ -0,0 +1,18 @@
++from decimal import Decimal
++
++from ix.apps.importador.definitions import CENTAVOS
++
++
++def es_vacio(valor) -> bool:
++    return valor is None or str(valor).strip() == ""
++
++
++def celda(valores: list, indice: int | None):
++    """Valor de la celda o None si el índice no existe en la fila."""
++    if indice is None or indice >= len(valores):
++        return None
++    return valores[indice]
++
++
++def redondear(valor) -> Decimal:
++    return Decimal(valor).quantize(CENTAVOS)
+diff --git a/apiserver/ix/apps/importador/validators.py b/apiserver/ix/apps/importador/validators.py
+index 6348d339..f371cbf3 100644
+--- a/apiserver/ix/apps/importador/validators.py
++++ b/apiserver/ix/apps/importador/validators.py
+@@ -1,68 +1,17 @@
+-from datetime import date, datetime
+-from decimal import Decimal, InvalidOperation
++from decimal import Decimal
+ 
+ from sqlalchemy import Numeric
+ 
+-from ix.apps.importador.definitions import (
+-    MAX_ERRORES_RESPUESTA, MAX_ORDEN_NUMERO, MSG_COLUMNA_OBLIGATORIA, MSG_COLUMNAS,
+-    MSG_ENTERO, MSG_EXCEDE_CARACTERES, MSG_FECHA, MSG_FILA_TOTAL_REPETIDA, MSG_FORMULA,
+-    MSG_LLAVE_DUPLICADA, MSG_NUMERO, MSG_NUMERO_RANGO, MSG_OBLIGATORIO, MSG_SIN_FILA_TOTAL,
+-    MSG_TOTALES_NO_CUADRAN, PREFIJOS_FORMULA,
++from ix.apps.importador.conversores import CONVERSORES
++from ix.apps.importador.definitions import MAX_ERRORES_RESPUESTA
++from ix.apps.importador.errors import ImportacionError, RowError
++from ix.apps.importador.mensajes import (
++    MSG_COLUMNA_OBLIGATORIA, MSG_COLUMNAS, MSG_EXCEDE_CARACTERES, MSG_FILA_TOTAL_REPETIDA,
++    MSG_LLAVE_DUPLICADA, MSG_NUMERO_RANGO, MSG_OBLIGATORIO, MSG_SIN_FILA_TOTAL,
+ )
+-from ix.apps.importador.errors import ImportError_, RowError
+-from ix.apps.importador.parsers import normalizar_encabezado
+-
+-
+-def _texto(valor):
+-    texto = str(valor).strip()
+-    if str(valor).startswith(PREFIJOS_FORMULA) or texto.startswith(PREFIJOS_FORMULA):
+-        raise ValueError(MSG_FORMULA)
+-    return texto
+-
+-
+-def _numero(valor) -> Decimal:
+-    try:
+-        numero = Decimal(str(valor).replace(",", "").strip())
+-    except InvalidOperation:
+-        raise ValueError(MSG_NUMERO)
+-    if not numero.is_finite():
+-        raise ValueError(MSG_NUMERO)
+-    if numero.adjusted() > MAX_ORDEN_NUMERO:
+-        raise ValueError(MSG_NUMERO_RANGO)
+-    return numero
+-
+-
+-def _decimal(valor):
+-    try:
+-        return _numero(valor).quantize(Decimal("0.01"))
+-    except InvalidOperation:
+-        raise ValueError(MSG_NUMERO)
+-
+-
+-def _entero(valor):
+-    numero = _numero(valor)
+-    if numero != numero.to_integral_value():
+-        raise ValueError(MSG_ENTERO)
+-    return int(numero)
+-
+-
+-def _fecha(valor):
+-    if isinstance(valor, datetime):
+-        return valor.date()
+-    if isinstance(valor, date):
+-        return valor
+-    texto = str(valor).strip()
+-    if len(texto) > 10 and texto[10] not in " T":
+-        raise ValueError(MSG_FECHA)
+-    try:
+-        if len(texto) > 10:
+-            return datetime.fromisoformat(texto).date()
+-        return date.fromisoformat(texto)
+-    except ValueError:
+-        raise ValueError(MSG_FECHA)
+-
+-
+-CONVERSORES = {"text": _texto, "decimal": _decimal, "int": _entero, "date": _fecha}
++from ix.apps.importador.totales import es_fila_total, leer_totales, verificar_totales
++from ix.apps.importador.utils import celda, es_vacio
++from ix.tools.utils.string_helpers import normalizar_encabezado
+ 
+ 
+ def mapear_columnas(layout, encabezados: list[str]) -> dict[str, int]:
+@@ -74,7 +23,7 @@ def mapear_columnas(layout, encabezados: list[str]) -> dict[str, int]:
+     faltantes = [{"columna": c.header, "mensaje": MSG_COLUMNA_OBLIGATORIA}
+                  for c in layout.columns if c.required and c.field not in indices]
+     if faltantes:
+-        raise ImportError_(MSG_COLUMNAS, errores=faltantes)
++        raise ImportacionError(MSG_COLUMNAS, errores=faltantes)
+     return indices
+ 
+ 
+@@ -95,9 +44,8 @@ def _convertir_fila(layout, indices, numero, valores):
+     for columna in layout.columns:
+         if columna.field not in indices:
+             continue
+-        indice = indices[columna.field]
+-        crudo = valores[indice] if indice < len(valores) else None
+-        if crudo is None or str(crudo).strip() == "":
++        crudo = celda(valores, indices[columna.field])
++        if es_vacio(crudo):
+             if columna.required:
+                 errores.append(RowError(numero, columna.header, crudo, MSG_OBLIGATORIO))
+             registro[columna.field] = None
+@@ -111,57 +59,12 @@ def _convertir_fila(layout, indices, numero, valores):
+     return registro, errores
+ 
+ 
+-def _columna(layout, header):
+-    return next(c for c in layout.columns if c.header == header)
+-
+-
+-def _es_fila_total(layout, indices, valores):
+-    fila_total = layout.fila_total
+-    if fila_total is None:
+-        return False
+-    indice = indices.get(_columna(layout, fila_total.header).field)
+-    if indice is None or indice >= len(valores) or valores[indice] is None:
+-        return False
+-    return str(valores[indice]).strip().casefold() == fila_total.marca.strip().casefold()
+-
+-
+-def _leer_totales(layout, indices, numero, valores):
+-    """Convierte las celdas de la fila de totales; devuelve totales por campo y errores."""
+-    totales, errores = {}, []
+-    for columna in layout.columns:
+-        if columna.field not in layout.fila_total.campos or columna.field not in indices:
+-            continue
+-        indice = indices[columna.field]
+-        crudo = valores[indice] if indice < len(valores) else None
+-        try:
+-            if crudo is None or str(crudo).strip() == "":
+-                raise ValueError(MSG_OBLIGATORIO)
+-            totales[columna.field] = Decimal(CONVERSORES[columna.kind](crudo)).quantize(Decimal("0.01"))
+-        except ValueError as e:
+-            errores.append(RowError(numero, columna.header, crudo, str(e)))
+-    return totales, errores
+-
+-
+-def _verificar_totales(layout, registros, totales):
+-    diferencias = []
+-    for columna in layout.columns:
+-        if columna.field not in totales:
+-            continue
+-        suma = sum((Decimal(r[columna.field]) for r in registros if r[columna.field] is not None),
+-                   Decimal(0)).quantize(Decimal("0.01"))
+-        if suma != totales[columna.field]:
+-            diferencias.append({"columna": columna.header, "esperado": str(totales[columna.field]),
+-                                "calculado": str(suma)})
+-    if diferencias:
+-        raise ImportError_(MSG_TOTALES_NO_CUADRAN, errores=diferencias)
+-
+-
+ def validar_filas(layout, indices, filas):
+     """Convierte todas las filas; devuelve registros, hasta 100 errores y el total de errores.
+ 
+     Las llaves se comparan sin distinguir mayúsculas y las vacías no cuentan como duplicadas.
+     Si el layout declara fila de totales, esa fila se aparta de los registros y, cuando no hay
+-    errores de fila, sus sumas deben coincidir con las de los registros o se lanza ImportError_.
++    errores de fila, sus sumas deben coincidir con las de los registros o se lanza ImportacionError.
+     """
+     encabezado_llave = next((c.header for c in layout.columns if c.field == layout.upsert_key), None)
+     if encabezado_llave is None:
+@@ -170,9 +73,9 @@ def validar_filas(layout, indices, filas):
+     totales = None
+     for numero, valores in filas:
+         registro = None
+-        if _es_fila_total(layout, indices, valores):
++        if es_fila_total(layout, indices, valores):
+             if totales is None:
+-                totales, errores_fila = _leer_totales(layout, indices, numero, valores)
++                totales, errores_fila = leer_totales(layout, indices, numero, valores)
+             else:
+                 errores_fila = [RowError(numero, layout.fila_total.header, None, MSG_FILA_TOTAL_REPETIDA)]
+         else:
+@@ -189,6 +92,6 @@ def validar_filas(layout, indices, filas):
+             registros.append(registro)
+     if layout.fila_total is not None and not total:
+         if totales is None:
+-            raise ImportError_(MSG_SIN_FILA_TOTAL)
+-        _verificar_totales(layout, registros, totales)
++            raise ImportacionError(MSG_SIN_FILA_TOTAL)
++        verificar_totales(layout, registros, totales)
+     return registros, errores, total
+diff --git a/apiserver/ix/tests/importador/test_endpoints.py b/apiserver/ix/tests/importador/test_endpoints.py
+index 9d6f6bd9..b8ddde27 100644
+--- a/apiserver/ix/tests/importador/test_endpoints.py
++++ b/apiserver/ix/tests/importador/test_endpoints.py
+@@ -8,10 +8,12 @@ from werkzeug.exceptions import RequestEntityTooLarge
+ 
+ from ix.api.errors import ApiError
+ from ix.app import app
+-from ix.apps.importador.definitions import MARGEN_MULTIPART, MSG_TAMANO
+-from ix.apps.importador.endpoints import _EntradaLimitada, _validar_rol
++from ix.apps.importador.definitions import MARGEN_MULTIPART
++from ix.apps.importador.mensajes import MSG_TAMANO
++from ix.apps.importador.endpoints import _validar_rol
+ from ix.apps.importador.layouts import LAYOUTS
+ from ix.config import config
++from ix.tools.utils.http_limits import EntradaLimitada
+ 
+ URL = "/api/importador"
+ 
+@@ -106,11 +108,11 @@ def test_multipart_chunked_sin_content_length_413(client, token):
+ 
+ 
+ def test_entrada_limitada_corta_la_lectura_al_superar_el_limite():
+-    entrada = _EntradaLimitada(io.BytesIO(b"0" * 100), 10)
++    entrada = EntradaLimitada(io.BytesIO(b"0" * 100), 10)
+     with pytest.raises(RequestEntityTooLarge):
+         while entrada.read(4):
+             pass
+ 
+ 
+ def test_entrada_limitada_permite_hasta_el_limite():
+-    assert _EntradaLimitada(io.BytesIO(b"0" * 10), 10).read(-1) == b"0" * 10
++    assert EntradaLimitada(io.BytesIO(b"0" * 10), 10).read(-1) == b"0" * 10
+diff --git a/apiserver/ix/tests/importador/test_layouts.py b/apiserver/ix/tests/importador/test_layouts.py
+index aa569bc0..4db16175 100644
+--- a/apiserver/ix/tests/importador/test_layouts.py
++++ b/apiserver/ix/tests/importador/test_layouts.py
+@@ -2,16 +2,10 @@ import dataclasses
+ 
+ import pytest
+ 
+-from ix.apps.importador.layouts import (
+-    LAYOUTS,
+-    FilaTotal,
+-    ImportColumn,
+-    ImportLayout,
+-    _registrar,
+-    obtener_layout,
+-)
+-from ix.apps.importador.parsers import normalizar_encabezado
++from ix.apps.importador.layouts import LAYOUTS, _registrar, obtener_layout
++from ix.apps.importador.schemas import FilaTotal, ImportColumn, ImportLayout
+ from ix.apps.importador.validators import mapear_columnas
++from ix.tools.utils.string_helpers import normalizar_encabezado
+ 
+ ENCABEZADOS_AVASA = ["Contract Number", "Número de Siniestro o Folio", "KM Traveled",
+                      "Di\xadas Renta", "Total del contrato", "Voucher Total",
+diff --git a/apiserver/ix/tests/importador/test_parsers.py b/apiserver/ix/tests/importador/test_parsers.py
+index ef8e5ced..e54cf8ef 100644
+--- a/apiserver/ix/tests/importador/test_parsers.py
++++ b/apiserver/ix/tests/importador/test_parsers.py
+@@ -3,8 +3,9 @@ import zipfile
+ 
+ import pytest
+ 
+-from ix.apps.importador.errors import ImportError_
+-from ix.apps.importador.parsers import leer_archivo, normalizar_encabezado
++from ix.apps.importador.errors import ImportacionError
++from ix.apps.importador.parsers import leer_archivo
++from ix.tools.utils.string_helpers import normalizar_encabezado
+ 
+ 
+ @pytest.mark.parametrize("crudo, esperado", [
+@@ -31,35 +32,35 @@ def test_lee_csv_utf8():
+ 
+ 
+ def test_rechaza_extension_no_permitida():
+-    with pytest.raises(ImportError_):
++    with pytest.raises(ImportacionError):
+         leer_archivo("r.xls", b"x", max_rows=10)
+ 
+ 
+ def test_rechaza_xlsx_falso():
+-    with pytest.raises(ImportError_):
++    with pytest.raises(ImportacionError):
+         leer_archivo("r.xlsx", b"no soy zip", max_rows=10)
+ 
+ 
+ def test_rechaza_csv_no_utf8():
+-    with pytest.raises(ImportError_):
++    with pytest.raises(ImportacionError):
+         leer_archivo("r.csv", b"\xff\xfe\x00a", max_rows=10)
+ 
+ 
+ def test_rechaza_zip_bomb(zip_bomb):
+-    with pytest.raises(ImportError_):
++    with pytest.raises(ImportacionError):
+         leer_archivo("r.xlsx", zip_bomb, max_rows=10)
+ 
+ 
+ def test_rechaza_exceso_de_filas(xlsx_bytes):
+     data = xlsx_bytes([["A"], ["1"], ["2"], ["3"]])
+     _, filas = leer_archivo("r.xlsx", data, max_rows=2)
+-    with pytest.raises(ImportError_):
++    with pytest.raises(ImportacionError):
+         list(filas)
+ 
+ 
+ def test_rechaza_zip_truncado_con_firma(xlsx_bytes):
+     data = xlsx_bytes([["A"], ["1"]])
+-    with pytest.raises(ImportError_):
++    with pytest.raises(ImportacionError):
+         leer_archivo("r.xlsx", data[: len(data) // 2], max_rows=10)
+ 
+ 
+@@ -67,7 +68,7 @@ def test_rechaza_zip_valido_que_no_es_xlsx():
+     buffer = io.BytesIO()
+     with zipfile.ZipFile(buffer, "w") as z:
+         z.writestr("texto.txt", "hola")
+-    with pytest.raises(ImportError_):
++    with pytest.raises(ImportacionError):
+         leer_archivo("r.xlsx", buffer.getvalue(), max_rows=10)
+ 
+ 
+@@ -80,13 +81,13 @@ def test_rechaza_hoja_xml_corrupta_al_consumir(xlsx_bytes):
+             if info.filename == "xl/worksheets/sheet1.xml":
+                 contenido = b"<worksheet><sheetData><row r='1'"
+             destino.writestr(info.filename, contenido)
+-    with pytest.raises(ImportError_):
++    with pytest.raises(ImportacionError):
+         _, filas = leer_archivo("r.xlsx", buffer.getvalue(), max_rows=10)
+         list(filas)
+ 
+ 
+ def test_rechaza_campo_csv_mayor_al_limite_al_consumir():
+     data = ("A\n" + "x" * 140000 + "\n").encode()
+-    with pytest.raises(ImportError_):
++    with pytest.raises(ImportacionError):
+         _, filas = leer_archivo("r.csv", data, max_rows=10)
+         list(filas)
+diff --git a/apiserver/ix/tests/importador/test_services.py b/apiserver/ix/tests/importador/test_services.py
+index bad3631d..f3c426be 100644
+--- a/apiserver/ix/tests/importador/test_services.py
++++ b/apiserver/ix/tests/importador/test_services.py
+@@ -1,7 +1,7 @@
+ import pytest
+ from sqlalchemy import func, select
+ 
+-from ix.apps.importador.errors import ImportError_
++from ix.apps.importador.errors import ImportacionError
+ from ix.apps.importador.layouts import obtener_layout
+ from ix.apps.importador.services import ImportService
+ from ix.boletas_informativas.auto_relevo.api.auto_relevo_boleta.auto_relevo_boleta_models import (
+@@ -45,7 +45,7 @@ def test_carga_y_recarga_idempotente(session, xlsx_bytes):
+ 
+ def test_fila_mala_no_escribe_nada(session, xlsx_bytes):
+     data = xlsx_bytes([ENCABEZADO, ["ZZT3", "R", 1, 1, 1, None], ["ZZT4", "R", "x", 1, 1, None]])
+-    with pytest.raises(ImportError_) as e:
++    with pytest.raises(ImportacionError) as e:
+         ImportService.importar(obtener_layout("avasa_contratos"), "r.xlsx", data, USER_ID, session, commit=False)
+     assert e.value.errores[0]["fila"] == 3
+     assert _contar(session, "ZZT") == 0
+@@ -100,7 +100,7 @@ def test_reporte_estilo_avasa_con_fila_de_totales(session, xlsx_bytes):
+ def test_totales_que_no_cuadran_no_escriben_nada(session, xlsx_bytes):
+     filas = [["ZZT9", "R", 1, 1, 1, None]]
+     data = xlsx_bytes([ENCABEZADO, *filas, [None, None, 1, 2, 1, "REPORT TOTAL"]])
+-    with pytest.raises(ImportError_) as e:
++    with pytest.raises(ImportacionError) as e:
+         ImportService.importar(obtener_layout("avasa_contratos"), "r.xlsx", data, USER_ID, session, commit=False)
+     assert e.value.status == 400
+     assert e.value.errores == [{"columna": "Total del contrato", "esperado": "2.00", "calculado": "1.00"}]
+diff --git a/apiserver/ix/tests/importador/test_validators.py b/apiserver/ix/tests/importador/test_validators.py
+index 34ea7180..edcf5f19 100644
+--- a/apiserver/ix/tests/importador/test_validators.py
++++ b/apiserver/ix/tests/importador/test_validators.py
+@@ -4,9 +4,10 @@ from decimal import Decimal
+ 
+ import pytest
+ 
+-from ix.apps.importador.errors import ImportError_
+-from ix.apps.importador.definitions import MSG_FILA_TOTAL_REPETIDA, MSG_SIN_FILA_TOTAL, MSG_TOTALES_NO_CUADRAN
+-from ix.apps.importador.layouts import FilaTotal, ImportColumn, ImportLayout, obtener_layout
++from ix.apps.importador.errors import ImportacionError
++from ix.apps.importador.mensajes import MSG_FILA_TOTAL_REPETIDA, MSG_SIN_FILA_TOTAL, MSG_TOTALES_NO_CUADRAN
++from ix.apps.importador.layouts import obtener_layout
++from ix.apps.importador.schemas import FilaTotal, ImportColumn, ImportLayout
+ from ix.apps.importador.validators import mapear_columnas, validar_filas
+ 
+ LAYOUT = ImportLayout(
+@@ -46,7 +47,7 @@ def test_mapear_usa_primera_aparicion_e_ignora_extras():
+ 
+ 
+ def test_mapear_reporta_obligatorias_faltantes():
+-    with pytest.raises(ImportError_) as e:
++    with pytest.raises(ImportacionError) as e:
+         mapear_columnas(LAYOUT, ["clave"])
+     assert e.value.errores == [{"columna": "Monto", "mensaje": "Columna obligatoria"}]
+ 
+@@ -226,14 +227,14 @@ def test_total_con_ruido_de_punto_flotante_cuadra():
+ 
+ 
+ def test_totales_que_no_cuadran_detalla_columnas():
+-    with pytest.raises(ImportError_) as e:
++    with pytest.raises(ImportacionError) as e:
+         validar_filas(LAYOUT_TOTAL, INDICES_TOTAL, [*DATOS_TOTAL, _total(monto="16")])
+     assert e.value.mensaje == MSG_TOTALES_NO_CUADRAN and e.value.status == 400
+     assert e.value.errores == [{"columna": "Monto", "esperado": "16.00", "calculado": "15.00"}]
+ 
+ 
+ def test_sin_fila_de_totales_es_error_de_archivo():
+-    with pytest.raises(ImportError_) as e:
++    with pytest.raises(ImportacionError) as e:
+         validar_filas(LAYOUT_TOTAL, INDICES_TOTAL, DATOS_TOTAL)
+     assert e.value.mensaje == MSG_SIN_FILA_TOTAL and e.value.status == 400
+ 
+diff --git a/apiserver/ix/tools/utils/http_limits.py b/apiserver/ix/tools/utils/http_limits.py
+new file mode 100644
+index 00000000..8a0a0484
+--- /dev/null
++++ b/apiserver/ix/tools/utils/http_limits.py
+@@ -0,0 +1,29 @@
++from werkzeug.exceptions import RequestEntityTooLarge
++
++
++class EntradaLimitada:
++    """Envuelve wsgi.input y falla al superar el límite cuando no hay Content-Length."""
++
++    def __init__(self, flujo, limite):
++        self._flujo = flujo
++        self._restante = limite
++
++    def _consumir(self, datos):
++        self._restante -= len(datos)
++        if self._restante < 0:
++            raise RequestEntityTooLarge()
++        return datos
++
++    def read(self, tamano=-1):
++        if tamano is None or tamano < 0:
++            tamano = self._restante + 1
++        return self._consumir(self._flujo.read(min(tamano, self._restante + 1)))
++
++    def readline(self, tamano=-1):
++        if tamano is None or tamano < 0:
++            tamano = self._restante + 1
++        return self._consumir(self._flujo.readline(min(tamano, self._restante + 1)))
++
++    def __iter__(self):
++        while linea := self.readline():
++            yield linea
+diff --git a/apiserver/ix/tools/utils/string_helpers.py b/apiserver/ix/tools/utils/string_helpers.py
+index 2de6c736..5f9e6024 100644
+--- a/apiserver/ix/tools/utils/string_helpers.py
++++ b/apiserver/ix/tools/utils/string_helpers.py
+@@ -1,4 +1,5 @@
+ import re
++import unicodedata
+ 
+ 
+ def get_transmission_type(text):
+@@ -26,4 +27,10 @@ def get_transmission_type(text):
+         return None
+     
+ def keep_only_letters_and_numbers(input_string):
+-    return re.sub(r'[^a-zA-Z0-9]', '', input_string).upper()
+\ No newline at end of file
++    return re.sub(r'[^a-zA-Z0-9]', '', input_string).upper()
++
++def normalizar_encabezado(valor) -> str:
++    """Quita acentos, guiones suaves y espacios repetidos, y pasa a minúsculas."""
++    texto = str(valor or "").replace("\xad", "")
++    texto = unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode()
++    return " ".join(texto.split()).lower()

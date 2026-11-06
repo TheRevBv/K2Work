@@ -1,0 +1,35 @@
+info:
+  name: "Caso feliz AVASA"
+  type: http
+  seq: 3
+
+http:
+  method: POST
+  url: "{{baseUrl}}/api/importador/{{layout}}"
+  body:
+    type: multipart-form
+    data:
+      - name: "file"
+        type: file
+        value:
+          - "archivos/01-avasa-ok.xlsx"
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        test("res.getStatus() === 200", () => expect(res.getStatus() === 200).to.be.true);
+        test("res.getBody().data.total === 3", () => expect(res.getBody().data.total === 3).to.be.true);
+
+docs:
+  content: |-
+    Esperado: 200, total 3 (la fila REPORT TOTAL no se carga). Segunda corrida: insertados 0, actualizados 3.
+  type: text/markdown
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

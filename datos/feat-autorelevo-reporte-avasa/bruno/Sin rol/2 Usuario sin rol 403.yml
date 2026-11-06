@@ -1,0 +1,32 @@
+info:
+  name: "Usuario sin rol 403"
+  type: http
+  seq: 2
+
+http:
+  method: POST
+  url: "{{baseUrl}}/api/importador/{{layout}}"
+  headers:
+    - name: "Authorization"
+      value: "Bearer {{token_sin_rol}}"
+  body:
+    type: multipart-form
+    data:
+      - name: "file"
+        type: file
+        value:
+          - "archivos/01-avasa-ok.xlsx"
+  auth: none
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        test("res.getStatus() === 403", () => expect(res.getStatus() === 403).to.be.true);
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

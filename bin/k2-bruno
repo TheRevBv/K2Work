@@ -1,0 +1,205 @@
+#!/usr/bin/env python3
+"""Genera una colección de Bruno 4.x (OpenCollection YAML) a partir de un spec JSON.
+
+Uso:
+    bin/k2-bruno <spec.json> [--out DIR] [--force]
+
+El spec describe la colección; cada request hereda de `defaults` y aplica `merge`
+sobre el body (merge profundo, `null` borra la llave). Ver
+.claude/skills/k2-bruno/SKILL.md para el formato completo.
+
+Las credenciales nunca se escriben en la colección: se referencian como
+{{process.env.VAR}} y el `.env` de la colección es un symlink a
+~/.config/k2work/bruno/<env>.env.
+"""
+import argparse
+import copy
+import json
+import os
+import pathlib
+import re
+import sys
+
+ENV_DIR = pathlib.Path.home() / ".config" / "k2work" / "bruno"
+HOSTS = {
+    "local": "http://127.0.0.1:8080",
+    "blip": "https://blip-dot-morfeo-dev-321917.ue.r.appspot.com",
+    "dev": "https://dev.k2web.online",
+}
+SETTINGS = """settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false
+"""
+LOGIN_SCRIPT = """const body = res.getBody();
+if (res.getStatus() >= 200 && res.getStatus() < 300 && body && body.token) {
+  bru.setVar("k2_token", body.token);
+}"""
+
+
+def q(value) -> str:
+    """Escalar YAML seguro (JSON es YAML válido)."""
+    return json.dumps(value, ensure_ascii=False)
+
+
+def block(text: str, indent: int) -> str:
+    pad = " " * indent
+    return "|-\n" + "\n".join(pad + line if line else "" for line in text.splitlines())
+
+
+def deep_merge(base, patch):
+    if not isinstance(base, dict) or not isinstance(patch, dict):
+        return copy.deepcopy(patch)
+    out = copy.deepcopy(base)
+    for key, value in patch.items():
+        if value is None:
+            out.pop(key, None)
+        else:
+            out[key] = deep_merge(out.get(key), value)
+    return out
+
+
+def safe_name(name: str) -> str:
+    return re.sub(r'[\\/:*?"<>|]', "-", name).strip()
+
+
+def variables_yaml(variables: dict, indent: int) -> str:
+    pad = " " * indent
+    lines = []
+    for name, value in variables.items():
+        lines.append(f"{pad}- name: {q(name)}")
+        lines.append(f"{pad}  value: {q(str(value))}")
+    return "\n".join(lines)
+
+
+def form_yaml(fields: list, indent: int) -> str:
+    """Campos multipart: {"name", "file": ruta relativa a la colección} o {"name", "value"}."""
+    pad = " " * indent
+    lines = []
+    for field in fields:
+        lines.append(f"{pad}- name: {q(field['name'])}")
+        if "file" in field:
+            lines.append(f"{pad}  type: file\n{pad}  value:\n{pad}    - {q(field['file'])}")
+        else:
+            lines.append(f"{pad}  type: text\n{pad}  value: {q(str(field['value']))}")
+    return "\n".join(lines)
+
+
+def collection_yaml(spec: dict) -> str:
+    variables = {"baseUrl": HOSTS.get(spec.get("host", "blip"), spec.get("host"))}
+    if spec.get("login", True):
+        variables["user"] = spec.get("user", "joshua.morinsalazar@chubb.com")
+        variables["pass"] = "{{process.env.K2_PASS}}"
+    variables.update(spec.get("variables", {}))
+    out = [f"opencollection: 1.0.0\n\ninfo:\n  name: {q(spec['name'])}\n", "request:"]
+    if spec.get("login", True):
+        out.append('  auth:\n    type: bearer\n    token: "{{k2_token}}"')
+    out.append("  variables:\n" + variables_yaml(variables, 4))
+    if spec.get("docs"):
+        out.append("\ndocs:\n  content: " + block(spec["docs"], 4) + "\n  type: text/markdown")
+    out.append("bundled: false\nextensions:\n  bruno:\n    ignore:\n      - node_modules\n      - .git\n")
+    return "\n".join(out)
+
+
+def request_yaml(req: dict, seq: int) -> str:
+    out = [f"info:\n  name: {q(req['name'])}\n  type: http\n  seq: {seq}\n", "http:"]
+    out.append(f"  method: {req.get('method', 'POST').upper()}")
+    out.append(f"  url: {q('{{baseUrl}}' + req['path'])}")
+    headers = req.get("headers", {})
+    if req.get("body") is not None:
+        headers = {"Content-Type": "application/json", **headers}
+    if headers:
+        out.append("  headers:")
+        for name, value in headers.items():
+            out.append(f"    - name: {q(name)}\n      value: {q(value)}")
+    if req.get("body") is not None:
+        body = json.dumps(req["body"], ensure_ascii=False, indent=2)
+        out.append("  body:\n    type: json\n    data: " + block(body, 6))
+    elif req.get("form"):
+        out.append("  body:\n    type: multipart-form\n    data:\n" + form_yaml(req["form"], 6))
+    out.append("  auth: " + ("none" if req.get("auth") == "none" else "inherit"))
+    scripts = []
+    if req.get("script"):
+        scripts.append(req["script"])
+    tests = req.get("tests", ["res.getStatus() === 200"])
+    for test in tests:
+        scripts.append(f"test({q(test)}, () => expect({test}).to.be.true);")
+    if scripts:
+        out.append("\nruntime:\n  scripts:\n    - type: after-response\n      code: "
+                   + block("\n".join(scripts), 8))
+    if req.get("vars"):
+        if not scripts:
+            out.append("\nruntime:")
+        out.append("  variables:\n" + variables_yaml(req["vars"], 4))
+    if req.get("docs"):
+        out.append("\ndocs:\n  content: " + block(req["docs"], 4) + "\n  type: text/markdown")
+    settings = SETTINGS
+    if req.get("followRedirects") is False:
+        settings = settings.replace("followRedirects: true", "followRedirects: false")
+    out.append("\n" + settings)
+    return "\n".join(out)
+
+
+def build_requests(spec: dict) -> list:
+    defaults = spec.get("defaults", {})
+    requests = []
+    if spec.get("login", True):
+        requests.append({
+            "name": "Login K2", "path": "/api/auth/token", "auth": "none",
+            "body": {"email": "{{user}}", "password": "{{pass}}"},
+            "script": LOGIN_SCRIPT, "tests": [],
+        })
+    for item in spec["requests"]:
+        req = {k: v for k, v in defaults.items() if k != "body"}
+        req.update({k: v for k, v in item.items() if k not in ("merge", "body")})
+        if "body" in item:
+            req["body"] = item["body"]
+        elif defaults.get("body") is not None:
+            req["body"] = deep_merge(defaults["body"], item.get("merge", {}))
+        requests.append(req)
+    return requests
+
+
+def write_collection(spec: dict, out: pathlib.Path, force: bool) -> None:
+    if (out / "opencollection.yml").exists():
+        if not force:
+            sys.exit(f"{out} ya tiene una colección; usa --force para regenerar")
+        for path in out.rglob("*.yml"):
+            path.unlink()
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "opencollection.yml").write_text(collection_yaml(spec))
+    seqs = {}
+    for req in build_requests(spec):
+        folder = out / safe_name(req["folder"]) if req.get("folder") else out
+        if folder != out and not (folder / "folder.yml").exists():
+            folder.mkdir(exist_ok=True)
+            (folder / "folder.yml").write_text(
+                f"info:\n  name: {q(req['folder'])}\n  type: folder\n  seq: {len(seqs) + 1}\n\nrequest:\n  auth: inherit\n")
+        seqs[folder] = seqs.get(folder, 0) + 1
+        (folder / f"{seqs[folder]} {safe_name(req['name'])}.yml").write_text(request_yaml(req, seqs[folder]))
+    (out / ".gitignore").write_text(".env*\nnode_modules\n")
+    env_file = ENV_DIR / f"{spec.get('env', 'k2')}.env"
+    link = out / ".env"
+    if not link.is_symlink():
+        link.symlink_to(env_file)
+    if not env_file.exists():
+        print(f"Aviso: falta {env_file} (K2_PASS=...); créalo con permisos 600")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("spec")
+    parser.add_argument("--out")
+    parser.add_argument("--force", action="store_true")
+    args = parser.parse_args()
+    spec_path = pathlib.Path(args.spec)
+    spec = json.loads(spec_path.read_text())
+    out = pathlib.Path(args.out) if args.out else spec_path.parent
+    write_collection(spec, out, args.force)
+    print(f"Colección '{spec['name']}' en {out}")
+
+
+if __name__ == "__main__":
+    main()

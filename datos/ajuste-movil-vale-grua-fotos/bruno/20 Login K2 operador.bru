@@ -1,0 +1,26 @@
+meta {
+  name: Login K2 operador
+  type: http
+  seq: 20
+}
+
+post {
+  url: {{baseUrl}}/auth/token
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "email": "{{operatorEmail}}",
+    "password": "{{operatorPassword}}"
+  }
+}
+
+script:post-response {
+  bru.setEnvVar("operatorToken", res.body.token);
+}
+
+assert {
+  res.status: eq 200
+}

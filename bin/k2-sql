@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+# k2-sql — consultas y pruebas SQL contra MySQL local o dev (perfiles en ~/.config/k2work).
+# DML corre con ROLLBACK salvo --commit; DDL exige --commit; test/prod bloqueados.
+set -euo pipefail
+
+CONFIG_DIR="${K2_CONFIG_DIR:-$HOME/.config/k2work}"
+MYSQL_BIN="${K2_MYSQL_BIN:-mysql}"
+DUMP_BIN="${K2_DUMP_BIN:-mariadb-dump}"
+
+die() { echo "k2-sql: $1" >&2; exit "${2:-1}"; }
+
+usage() {
+  cat >&2 <<'EOF'
+Uso:
+  k2-sql <perfil> -e "<sql>" [--commit]
+  k2-sql <perfil> -f archivo.sql [--commit]
+  k2-sql <perfil> tablas <patron>
+  k2-sql <perfil> columnas <patron>
+  k2-sql <perfil> describe <tabla>
+  k2-sql <perfil> buscar <valor> <tabla>
+  k2-sql <perfil> dump <archivo.sql.gz> <base> [<base>...]
+Perfiles: local, dev
+EOF
+  exit 1
+}
+
+[ $# -ge 2 ] || usage
+profile="$1"; shift
+
+case "$profile" in
+  local|dev) ;;
+  *) die "perfil '$profile' bloqueado (solo local y dev)" 2 ;;
+esac
+
+profile_file="$CONFIG_DIR/db.$profile.env"
+[ -f "$profile_file" ] || die "falta $profile_file" 3
+set -a; . "$profile_file"; set +a
+
+blocked_re='(^|[-_.])(prod|prd|test|qa)([-_.]|$)'
+shopt -s nocasematch
+for value in "${K2_DB_HOST:-}" "${K2_DB_NAME:-}"; do
+  if [[ "$value" =~ $blocked_re ]]; then
+    die "destino '$value' parece test/prod; bloqueado" 2
+  fi
+done
+shopt -u nocasematch
+
+if [ "$profile" = dev ]; then
+  (exec 3<>"/dev/tcp/${K2_DB_HOST:-127.0.0.1}/${K2_DB_PORT:-3306}") 2>/dev/null \
+    || die "el proxy de dev no escucha en ${K2_DB_HOST:-127.0.0.1}:${K2_DB_PORT:-3306}; levanta cloud-sql-proxy" 4
+fi
+
+run_mysql() {
+  MYSQL_PWD="${K2_DB_PASSWORD:-}" "$MYSQL_BIN" \
+    -h "${K2_DB_HOST:-127.0.0.1}" -P "${K2_DB_PORT:-3306}" \
+    -u "${K2_DB_USER:-root}" "${K2_DB_NAME:-}" "$@"
+}
+
+ddl_re='\b(alter|drop|create|truncate|rename|grant|revoke)\b'
+dml_re='\b(insert|update|delete|replace)\b'
+readonly_re='^[[:space:]]*(select|show|describe|desc|explain)\b'
+
+exec_sql() {
+  local sql="$1" commit="$2" low body
+  sql="${sql%"${sql##*[![:space:]]}"}"
+  [[ "$sql" == *\; ]] || sql="$sql;"
+  low="$(printf '%s' "$sql" | tr '[:upper:]' '[:lower:]')"
+  body="${low%;}"
+
+  if [[ "$low" =~ $readonly_re && "$body" != *";"* ]]; then
+    printf '%s\n' "$sql" | run_mysql --table
+    return
+  fi
+  if [[ "$low" =~ $ddl_re && "$commit" != 1 ]]; then
+    die "DDL hace commit implicito y no se puede revertir; usa --commit con confirmacion del usuario" 5
+  fi
+  if [ "$commit" = 1 ]; then
+    if [ "$profile" = dev ] && [ "${K2_CONFIRM_DEV:-}" != "si" ]; then
+      die "--commit en dev requiere K2_CONFIRM_DEV=si (solo tras confirmacion del usuario)" 6
+    fi
+    printf '%s\n' "$sql" | run_mysql --table
+  elif [[ "$low" =~ $dml_re ]]; then
+    printf 'START TRANSACTION;\n%s\nROLLBACK;\n' "$sql" | run_mysql --table
+    echo "k2-sql: modificaciones revertidas (ROLLBACK); usa --commit para persistir" >&2
+  else
+    printf '%s\n' "$sql" | run_mysql --table
+  fi
+}
+
+ident() { [[ "$1" =~ ^[A-Za-z0-9_%]+$ ]] || die "valor invalido: '$1'" 1; }
+
+commit=0
+cmd="${1:-}"
+case "$cmd" in
+  -e)
+    [ $# -ge 2 ] || usage
+    sql="$2"; shift 2
+    [ "${1:-}" = "--commit" ] && commit=1
+    exec_sql "$sql" "$commit"
+    ;;
+  -f)
+    [ $# -ge 2 ] || usage
+    [ -f "$2" ] || die "no existe $2" 1
+    sql="$(cat "$2")"; shift 2
+    [ "${1:-}" = "--commit" ] && commit=1
+    exec_sql "$sql" "$commit"
+    ;;
+  tablas)
+    [ $# -ge 2 ] || usage; ident "$2"
+    exec_sql "SHOW TABLES LIKE '%$2%'" 0
+    ;;
+  columnas)
+    [ $# -ge 2 ] || usage; ident "$2"
+    exec_sql "SELECT table_name, column_name, data_type FROM information_schema.columns WHERE table_schema = DATABASE() AND column_name LIKE '%$2%' ORDER BY table_name, ordinal_position" 0
+    ;;
+  describe)
+    [ $# -ge 2 ] || usage; ident "$2"
+    exec_sql "DESCRIBE \`$2\`" 0
+    ;;
+  buscar)
+    [ $# -ge 3 ] || usage; ident "$3"
+    valor="$2"; tabla="$3"
+    cols="$(printf "SELECT column_name FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = '%s' AND data_type IN ('char','varchar','tinytext','text','mediumtext','longtext');\n" "$tabla" | run_mysql --batch --skip-column-names)"
+    [ -n "$cols" ] || die "la tabla '$tabla' no existe o no tiene columnas de texto" 7
+    q="'"
+    esc="${valor//\\/\\\\}"
+    esc="${esc//$q/$q$q}"
+    where=""
+    while IFS= read -r c; do
+      where+="${where:+ OR }\`$c\` LIKE '%$esc%'"
+    done <<< "$cols"
+    exec_sql "SELECT * FROM \`$tabla\` WHERE $where LIMIT 50" 0
+    ;;
+  dump)
+    [ $# -ge 3 ] || usage
+    destino="$2"; shift 2
+    [ ! -e "$destino" ] || die "ya existe $destino" 1
+    shopt -s nocasematch
+    for base in "$@"; do
+      ident "$base"
+      [[ ! "$base" =~ $blocked_re ]] || die "destino '$base' parece test/prod; bloqueado" 2
+    done
+    shopt -u nocasematch
+    umask 077
+    # El DEFINER del servidor de origen impide importar vistas y triggers en otro servidor sin SUPER.
+    MYSQL_PWD="${K2_DB_PASSWORD:-}" "$DUMP_BIN" \
+      -h "${K2_DB_HOST:-127.0.0.1}" -P "${K2_DB_PORT:-3306}" -u "${K2_DB_USER:-root}" \
+      --single-transaction --quick --no-tablespaces --routines --triggers --events \
+      --hex-blob --default-character-set=utf8mb4 --databases "$@" \
+      | sed -E 's#^(/\*!50013 )DEFINER=[^ ]+ #\1#; s#^(/\*!50[0-9]{3} CREATE\*/ )/\*!50[0-9]{3} DEFINER=[^*]+\*/ #\1#; s#^CREATE DEFINER=[^ ]+ (PROCEDURE|FUNCTION) #CREATE \1 #' \
+      | gzip -9 > "$destino.part"
+    mv "$destino.part" "$destino"
+    ;;
+  *) usage ;;
+esac

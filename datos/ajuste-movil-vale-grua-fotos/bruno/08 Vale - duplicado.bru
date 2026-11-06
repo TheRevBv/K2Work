@@ -1,0 +1,23 @@
+meta {
+  name: Vale - duplicado
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/v2/ajuste-movil/cases/{{caseId}}/tow-vouchers
+  body: multipartForm
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:multipart-form {
+  file: @file(archivos/vale.pdf)
+}
+
+assert {
+  res.status: eq 409
+}

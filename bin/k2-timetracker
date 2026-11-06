@@ -1,0 +1,221 @@
+#!/usr/bin/env python3
+"""Sube la bitácora CDS de Obsidian al CDS Time Tracker (storage.googleapis.com/morfeo-cds-herramientas-html/timetracker.html).
+
+    k2-timetracker proyectos [--date 2026-10-19]   # proyectos, actividades BAU y lo ya capturado del mes
+    k2-timetracker [--date 2026-10-08]             # dry-run: muestra qué se capturaría
+    k2-timetracker --apply [--date ...]            # captura de verdad
+
+Cada viñeta `- (N h) ...` va a un proyecto según las líneas `- Time Tracker: `CODIGO` ... · claves: a, b`
+de K2Work/docs/tareas/*.md y luego según REGLAS (palabra en la descripción); si no
+coincide ninguna, a BAU con la actividad --bau (o TIMETRACKER_BAU, por defecto "Incidencias K2").
+Una viñeta puede fijar otro con `[CODIGO]` o `[BAU: actividad]` justo después de las horas.
+Las viñetas del mismo proyecto se juntan en una entrada (horas sumadas, descripciones con " / "),
+igual que la página, y el día se ajusta a --horas (por defecto 8) en múltiplos de 0.5.
+Los días que ya tienen horas en el portal se saltan.
+
+Credenciales: TIMETRACKER_HOST, TIMETRACKER_USER, TIMETRACKER_PASSWORD en el archivo de
+--env (por defecto ~/Documentos/ObsidianVault/Trabajo/Cds/timetracker.env).
+"""
+import argparse
+import json
+import re
+import sys
+import urllib.error
+import urllib.request
+from collections import OrderedDict
+from datetime import date
+from pathlib import Path
+
+API = "https://fn-rti-ayk3x7mm3q-ue.a.run.app"
+TAREAS = Path(__file__).resolve().parent.parent / "docs/tareas"
+CDS_DIR = Path.home() / "Documentos/ObsidianVault/Trabajo/Cds"
+REGLAS = [
+    (r"autorelevo", "2026_58P_MicrositioAutorelevo"),
+    (r"ajuste m[oó]vil|volante", "2026_5P_ColisiónAjusteMóvil-F4"),
+]
+MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
+         "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+
+
+def load_env(path):
+    env = {}
+    for line in Path(path).read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            k, v = line.split("=", 1)
+            env[k.strip()] = v.strip().strip("'\"")
+    return env
+
+
+def default_note():
+    hoy = date.today()
+    return CDS_DIR / f"Mensuales/Tareas {MESES[hoy.month - 1].capitalize()} {hoy.year}.md"
+
+
+def parse_note(path):
+    """{'YYYY-MM-DD': [(horas, tag|None, descripcion), ...]}"""
+    year = (re.search(r"(\d{4})", Path(path).name) or [None, str(date.today().year)])[1]
+    days, cur = {}, None
+    for raw in Path(path).read_text().splitlines():
+        line = raw.strip()
+        h = re.match(r"^(\d{1,2}) de ([a-záéíóú]+)$", line, re.I)
+        if h and h.group(2).lower() in MESES:
+            cur = days.setdefault(f"{year}-{MESES.index(h.group(2).lower()) + 1:02d}-{int(h.group(1)):02d}", [])
+            continue
+        a = re.match(r"^- \((\d+(?:[.,]\d+)?) ?h\)\s*(?:\[([^\]]+)\]\s*)?(.+)$", line, re.I)
+        if a and cur is not None:
+            cur.append((float(a.group(1).replace(",", ".")), a.group(2), a.group(3).strip()))
+    return days
+
+
+class Client:
+    def __init__(self, host):
+        self.host, self.token = host.rstrip("/"), None
+
+    def req(self, path, body=None):
+        headers = {"Content-Type": "application/json"}
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+        data = json.dumps(body).encode() if body is not None else None
+        r = urllib.request.Request(self.host + path, data=data, headers=headers,
+                                   method="POST" if data else "GET")
+        try:
+            with urllib.request.urlopen(r, timeout=60) as res:
+                return json.loads(res.read() or "null")
+        except urllib.error.HTTPError as e:
+            sys.exit(f"{path}: HTTP {e.code} {e.read().decode(errors='replace')[:300]}")
+
+    def login(self, user, password):
+        r = self.req("/tt/auth/login", {"email": user, "password": password})
+        if not (r or {}).get("token"):
+            sys.exit("Login fallido: revisa el timetracker.env")
+        self.token = r["token"]
+
+    def logout(self):
+        self.req("/tt/auth/logout", {})
+
+
+def reglas_tareas():
+    """Reglas de docs/tareas: `- Time Tracker: `CODIGO` ... · claves: a, b`."""
+    out = []
+    for f in sorted(TAREAS.glob("*.md")):
+        for line in f.read_text().splitlines():
+            m = re.match(r"^- Time Tracker: `([^`]+)`.*?claves: (.+)$", line.strip())
+            if m:
+                claves = [re.escape(c.strip()) for c in m.group(2).split(",") if c.strip()]
+                out.append(("|".join(claves), m.group(1)))
+    return out
+
+
+def ajustar(ents, objetivo):
+    total = sum(e["horas"] for e in ents)
+    if not objetivo or not total or total == objetivo:
+        return ents
+    for e in ents:
+        e["horas"] = max(0.5, round(e["horas"] * objetivo / total * 2) / 2)
+    resto = objetivo - sum(e["horas"] for e in ents)
+    max(ents, key=lambda e: e["horas"])["horas"] += resto
+    return ents
+
+
+def proyecto_de(tag, desc, bau_default):
+    if tag:
+        tag = tag.strip()
+        if tag.upper().startswith("BAU:"):
+            return "BAU", tag.split(":", 1)[1].strip()
+        return tag, bau_default if tag == "BAU" else None
+    for patron, codigo in reglas_tareas() + REGLAS:
+        if re.search(patron, desc, re.I):
+            return codigo, None
+    return "BAU", bau_default
+
+
+def entradas(acts, bau_default, proyectos):
+    por_codigo = {p["codigo"]: p for p in proyectos}
+    out = OrderedDict()
+    for horas, tag, desc in acts:
+        codigo, bau = proyecto_de(tag, desc, bau_default)
+        if codigo not in por_codigo:
+            raise ValueError(f"proyecto «{codigo}» no existe o no está activo")
+        if codigo == "BAU" and not bau:
+            raise ValueError(f"BAU requiere actividad: [BAU: <actividad>] en «{desc}»")
+        e = out.get(codigo)
+        if e:
+            e["horas"] += horas
+            e["descripcion"] += " / " + desc
+        else:
+            e = out[codigo] = {"codigo": codigo, "nombre": por_codigo[codigo].get("nombre", codigo),
+                               "horas": horas, "descripcion": desc}
+            if bau:
+                e["actividad_bau"] = bau
+    return list(out.values())
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("cmd", nargs="?", choices=["subir", "proyectos"], default="subir")
+    ap.add_argument("--note", default=None)
+    ap.add_argument("--env", default=str(CDS_DIR / "timetracker.env"))
+    ap.add_argument("--date")
+    ap.add_argument("--bau")
+    ap.add_argument("--horas", type=float, default=8, help="horas por día en el portal (0 = las de la nota)")
+    ap.add_argument("--apply", action="store_true")
+    a = ap.parse_args()
+
+    env = load_env(a.env)
+    c = Client(env.get("TIMETRACKER_API") or API)
+    c.login(env["TIMETRACKER_USER"], env["TIMETRACKER_PASSWORD"])
+    try:
+        if a.cmd == "proyectos":
+            d = a.date or date.today().isoformat()
+            for p in c.req(f"/tt/proyectos?date={d}") or []:
+                print(f"{p.get('codigo')}\t{p.get('nombre')}")
+            print("\nActividades BAU:")
+            for x in (c.req("/tt/catalogos") or {}).get("bau_actividades", []):
+                print(f"  {x}")
+            print(f"\nCapturado en {d[:7]}:")
+            for h in sorted(c.req(f"/tt/horas?month={d[:7]}") or [], key=lambda h: h["fecha"]):
+                print(f"  {h['fecha']}\t{h.get('total')} h")
+            return
+
+        note = a.note or default_note()
+        default = a.bau or env.get("TIMETRACKER_BAU") or "Incidencias K2"
+        days = parse_note(note)
+        print(f"{'APLICAR' if a.apply else 'DRY-RUN'} · {Path(note).name}\n")
+        cache, ya = {}, {}
+        for fecha in sorted(days):
+            if a.date and fecha != a.date:
+                continue
+            acts = days[fecha]
+            if not acts:
+                print(f"== {fecha}: sin horas en la nota, se salta")
+                continue
+            mes = fecha[:7]
+            if mes not in ya:
+                ya[mes] = {h["fecha"]: h for h in c.req(f"/tt/horas?month={mes}") or []}
+            if (ya[mes].get(fecha) or {}).get("total"):
+                print(f"== {fecha}: ya tiene {ya[mes][fecha]['total']} h en el portal, se salta")
+                continue
+            if fecha not in cache:
+                cache[fecha] = c.req(f"/tt/proyectos?date={fecha}") or []
+            try:
+                ents = ajustar(entradas(acts, default, cache[fecha]), a.horas)
+            except ValueError as e:
+                print(f"== {fecha}: ERROR {e}")
+                continue
+            total = sum(e["horas"] for e in ents)
+            print(f"== {fecha} · {total:g} h")
+            for e in ents:
+                bau = f" ({e['actividad_bau']})" if e.get("actividad_bau") else ""
+                print(f"   {e['horas']:g} h {e['codigo']}{bau}: {e['descripcion']}")
+            if a.apply:
+                r = c.req("/tt/horas", {"fecha": fecha, "entradas": ents})
+                print(f"   -> guardado, total del día {r.get('total')} h" if (r or {}).get("ok") else f"   -> FALLÓ: {r}")
+        if not a.apply:
+            print("\nDry-run: no se escribió nada. Usa --apply para capturar.")
+    finally:
+        c.logout()
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,21 @@
+meta {
+  name: Lote - cerrar
+  type: http
+  seq: 18
+}
+
+post {
+  url: {{baseUrl}}/v2/ajuste-movil/cases/{{caseId}}/photo-batches/{{batchId}}/close
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+
+assert {
+  res.status: eq 200
+  res.body.data.received: eq 2
+}

@@ -1,0 +1,81 @@
+{
+  "name": "CDSPC-147 grúa programada WA",
+  "host": "blip",
+  "env": "k2",
+  "variables": {
+    "clave": "CBH",
+    "poliza": "MX0072236581",
+    "inciso": "1",
+    "fechaYhora": "2026-10-22T14:30:00-06:00",
+    "blipUser": "chat.whatsappachubb.com",
+    "blipPassword": "{{process.env.BLIP_PASS}}",
+    "blipToken": ""
+  },
+  "docs": "Grúa programada desde WhatsApp (Blip). Payload real de Blip (correo 2026-10-21): `ticket.programado` y `ticket.fechaYhora`.\nVerificar con `datos/cdspc-147/bruno/verificar.sql` cambiando el case_id. Si responde 'La poliza tiene casos abiertos', cambiar `poliza`.",
+  "defaults": {
+    "method": "POST",
+    "path": "/api/v2/wa/create_ticket",
+    "body": {
+      "ClaveId": "{{clave}}",
+      "PolizaId": "{{poliza}}",
+      "NumeroInciso": "{{inciso}}",
+      "phone": "4442888124",
+      "country_phone_code": "52",
+      "ticket": {
+        "service_id": 332,
+        "latitude": 22.1119428,
+        "longitude": -101.0176936,
+        "programado": "SI",
+        "comment": "QA CDSPC-147 ¿El volante se mueve normal? 0_Sí\nPlacas UXC109C\nColor del auto Negro",
+        "fechaYhora": "{{fechaYhora}}"
+      },
+      "latitude": 22.15231334,
+      "longitude": -101.00748321
+    }
+  },
+  "requests": [
+    {
+      "name": "Grua programada (payload Blip)",
+      "docs": "Esperado: ticket_type 11, created_time = fechaYhora en UTC (14:30 -06:00 → 20:30), comment 'Programado: 22-10-2026 14:30'."
+    },
+    {
+      "name": "Grua no programada",
+      "merge": {
+        "ticket": {
+          "programado": "NO"
+        }
+      },
+      "docs": "Esperado: sin ticket_type 11."
+    },
+    {
+      "name": "Grua SI sin fecha",
+      "merge": {
+        "ticket": {
+          "fechaYhora": null
+        }
+      },
+      "docs": "Esperado: sin ticket_type 11."
+    },
+    {
+      "name": "Grua programada sin zona",
+      "merge": {
+        "ticket": {
+          "fechaYhora": "2026-10-22T14:30:00"
+        }
+      },
+      "docs": "Sin offset se asume America/Mexico_City. Esperado igual al caso 1."
+    },
+    {
+      "name": "Grua programada formato raiz (legacy)",
+      "merge": {
+        "programado": "SI",
+        "fecha_programada": "2026-10-22T14:30:00",
+        "ticket": {
+          "programado": null,
+          "fechaYhora": null
+        }
+      },
+      "docs": "Compatibilidad con programado/fecha_programada en la raíz. Esperado igual al caso 1."
+    }
+  ]
+}

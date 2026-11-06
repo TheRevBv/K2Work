@@ -1,0 +1,141 @@
+From 9475091bd1da4b676893eac2efa7e5de4a9186a5 Mon Sep 17 00:00:00 2001
+From: JoshMorinDev <joshua.morinsalazar@chubb.com>
+Date: Fri, 16 Oct 2026 16:45:05 -0600
+Subject: [PATCH] =?UTF-8?q?feat:=20CDSPC-147=20programado=20de=20gr=C3=BAa?=
+ =?UTF-8?q?=20desde=20WA=20en=20bit=C3=A1cora?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Acepta programado/fecha_programada en /v2/wa/create_ticket y, si programado=SI,
+genera el ticket PROGRAMMED con el comentario "Programado: dd-mm-aaaa HH:MM".
+---
+ .../ix/models/assistance_programming_type.py  |  2 ++
+ apiserver/ix/svc/assistanceticket.py          |  1 +
+ .../ix/whatsApp/endpoints/ticket_creation.py  |  4 ++-
+ apiserver/ix/whatsApp/schemas/schemas.py      | 30 +++++++++++--------
+ apiserver/ix/whatsApp/utils/utils.py          | 14 +++++++++
+ 5 files changed, 38 insertions(+), 13 deletions(-)
+
+diff --git a/apiserver/ix/models/assistance_programming_type.py b/apiserver/ix/models/assistance_programming_type.py
+index 267e4d27..208f9f3a 100755
+--- a/apiserver/ix/models/assistance_programming_type.py
++++ b/apiserver/ix/models/assistance_programming_type.py
+@@ -20,6 +20,8 @@ class AssistanceProgrammingType(database.Model, Base, QueryMixin):
+ 
+     __tablename__ = 'assistance_programming_type'
+ 
++    COORDINATION = 10
++
+     id = Column(Integer, primary_key=True, autoincrement=True, unique=True)
+     name = Column(Unicode(255), nullable=False)
+     status = Column(Boolean, nullable=False)
+diff --git a/apiserver/ix/svc/assistanceticket.py b/apiserver/ix/svc/assistanceticket.py
+index 73fe45a0..9e1c1096 100644
+--- a/apiserver/ix/svc/assistanceticket.py
++++ b/apiserver/ix/svc/assistanceticket.py
+@@ -1966,6 +1966,7 @@ Saludos"""
+             comment = ""
+             if item_program_type:
+                 comment = item_program_type.name
++            comment = data.get("program_comment") or comment
+ 
+             # Use the information of the last ticket
+             program_ticket = m.AssistanceTicket(
+diff --git a/apiserver/ix/whatsApp/endpoints/ticket_creation.py b/apiserver/ix/whatsApp/endpoints/ticket_creation.py
+index e6cbac3f..94d13460 100644
+--- a/apiserver/ix/whatsApp/endpoints/ticket_creation.py
++++ b/apiserver/ix/whatsApp/endpoints/ticket_creation.py
+@@ -15,7 +15,8 @@ from ix.whatsApp.utils.utils import (
+     CANNOT_FIND_PLAN_RESPONSE, CANNOT_VALIDATE_POLICY_RESPONSE, EXPIRED_POLICY_RESPONSE, OPEN_CASE_RESPONSE, OUT_OF_ASSISTANCES_RESPONSE, change_keys_for_chubb_and_k2, check_home_policy, check_if_user_color_is_in_db, create_log_in_db, create_log_in_table, get_assistance_plan_id, get_assistance_sale_id,
+     get_category_plan_assistanc_service, get_location_by_coordinates, log_and_respond, obtain_member_id, override_user_if_srl, review_home_policy, review_policy, review_remaing_assitances,
+     update_db_log, get_car_model_id, update_table_log, validate_assistanceplans_info, validate_ticket_with_service_id_range, create_home_assistance_case, get_home_policy_detail,
+-    get_sponsors_and_products_for_policies, create_sponsors_and_assistances_from_chubb_data, create_assistance_plans_from_assistance_names
++    get_sponsors_and_products_for_policies, create_sponsors_and_assistances_from_chubb_data, create_assistance_plans_from_assistance_names,
++    set_scheduled_ticket
+ )
+ from ix.whatsApp.utils.non_auto_utils import create_tickets_for_traditional_channel_case, is_home_provider_service_id, resolve_internal_service_id, update_non_auto_case_with_telasist_tickets
+ from ix.whatsApp.utils.wa_nps import send_nps_by_wa
+@@ -147,6 +148,7 @@ def create_ticket_from_wa():
+         # Creamos la asistencia con la data
+         # Añadimos la variable de from_chat para que el comentario diga que fue creada desde WhatsApp
+         data["ticket"]["from_chat"] = True
++        set_scheduled_ticket(data)
+         assistance_case, _ = assistance_case_svc.create_initial_case_ticket(
+             data, data.get("ticket"))
+ 
+diff --git a/apiserver/ix/whatsApp/schemas/schemas.py b/apiserver/ix/whatsApp/schemas/schemas.py
+index d0bd45ac..2b58f89b 100644
+--- a/apiserver/ix/whatsApp/schemas/schemas.py
++++ b/apiserver/ix/whatsApp/schemas/schemas.py
+@@ -1,5 +1,22 @@
+ from ix.svc.telasist.enums import TelasistStatus
++
++scheduled_service_schema = {
++    'programado': {
++        'type': 'string',
++        'required': False,
++        'nullable': True,
++        'allowed': ['SI', 'NO']
++    },
++    'fecha_programada': {
++        'type': 'string',
++        'required': False,
++        'nullable': True,
++        # Formato esperado: "2025-10-21T15:00:00"
++    },
++}
++
+ schema_whats_app_assistancecase = {
++    **scheduled_service_schema,
+     'ClaveId': {
+         'type': 'string',
+         'required': True,
+@@ -388,18 +405,7 @@ schema_create_home_assistance_case =  {
+         'required': False,
+         'nullable': True,
+     },
+-    'programado': {
+-        'type': 'string',
+-        'required': False,
+-        'nullable': True,
+-        'allowed': ['SI', 'NO']
+-    },
+-    'fecha_programada': {
+-        'type': 'string',
+-        'required': False,
+-        'nullable': True,
+-        # Formato esperado: "2025-10-21T15:00:00"
+-    },
++    **scheduled_service_schema,
+     'responsable_domicilio': {
+         'type': 'string',
+         'required': False,
+diff --git a/apiserver/ix/whatsApp/utils/utils.py b/apiserver/ix/whatsApp/utils/utils.py
+index 8a9b4913..b92bfeee 100644
+--- a/apiserver/ix/whatsApp/utils/utils.py
++++ b/apiserver/ix/whatsApp/utils/utils.py
+@@ -111,6 +111,20 @@ def _is_scheduled(data: dict) -> bool:
+     return str(data.get("programado") or "").strip().upper() == "SI"
+ 
+ 
++def set_scheduled_ticket(data: dict) -> None:
++    """Marca el primer ticket como programado cuando WA envía programado=SI con fecha_programada."""
++    if not (_is_scheduled(data) and data.get("fecha_programada")):
++        return
++    fecha_programada = data["fecha_programada"]
++    fecha = datetime.strptime(fecha_programada[:19], "%Y-%m-%dT%H:%M:%S")
++    data["ticket"].update({
++        "programmed": 1,
++        "programdate": fecha_programada,
++        "program_type": m.AssistanceProgrammingType.COORDINATION,
++        "program_comment": f"Programado: {fecha:%d-%m-%Y %H:%M}",
++    })
++
++
+ def _get_home_plans_typologies() -> list:
+     """Devuelve las typologías de home_plans con caché Redis de 10 min.
+ 
+-- 
+2.56.0
+

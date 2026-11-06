@@ -1,0 +1,42 @@
+info:
+  name: 1 — Token SIT
+  type: http
+  seq: 2
+
+http:
+  method: POST
+  url: "{{tokenUrl}}"
+  headers:
+    - name: Content-Type
+      value: application/json
+    - name: App_ID
+      value: "{{appId}}"
+    - name: App_Key
+      value: "{{appKey}}"
+    - name: Resource
+      value: "{{resource}}"
+    - name: apiVersion
+      value: "1"
+  body:
+    type: json
+    data: ""
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        test('Status 200', () => expect(res.getStatus()).to.equal(200));
+        const body = res.getBody();
+        test('access_token presente', () => expect(body.access_token).to.be.a('string').and.not.empty);
+        if (body.access_token) {
+          bru.setCollectionVar('chubb_sit_token', body.access_token);
+          console.log('Token guardado. Expira en:', body.expires_in, 'segundos');
+        }
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

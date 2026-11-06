@@ -1,0 +1,32 @@
+info:
+  name: login k2
+  type: http
+  seq: 2
+
+http:
+  method: POST
+  url: "{{baseUrl}}/api/auth/token"
+  body:
+    type: json
+    data: |-
+      {
+        "email": "{{user}}",
+        "password": "{{pass}}"
+      }
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        const body = res.getBody();
+        if (res.getStatus() >= 200 && res.getStatus() < 300 && body && body.token) {
+          bru.setVar("k2_token", body.token);
+        }
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

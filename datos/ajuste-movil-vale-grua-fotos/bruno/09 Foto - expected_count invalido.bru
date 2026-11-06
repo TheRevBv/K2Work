@@ -1,0 +1,28 @@
+meta {
+  name: Foto - expected_count invalido
+  type: http
+  seq: 9
+}
+
+script:pre-request {
+  bru.setEnvVar("batchId", require("crypto").randomUUID());
+}
+
+put {
+  url: {{baseUrl}}/v2/ajuste-movil/cases/{{caseId}}/photo-batches/{{batchId}}/photos/1
+  body: multipartForm
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:multipart-form {
+  file: @file(archivos/foto-1.jpg)
+  expected_count: 99
+}
+
+assert {
+  res.status: eq 400
+}

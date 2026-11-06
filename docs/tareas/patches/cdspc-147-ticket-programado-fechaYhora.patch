@@ -1,0 +1,83 @@
+diff --git a/apiserver/ix/whatsApp/schemas/schemas.py b/apiserver/ix/whatsApp/schemas/schemas.py
+index 2b58f89b..c2e00397 100644
+--- a/apiserver/ix/whatsApp/schemas/schemas.py
++++ b/apiserver/ix/whatsApp/schemas/schemas.py
+@@ -103,7 +103,14 @@ schema_whats_app_assistancecase = {
+             },
+             'trigger': {
+                 'type': 'boolean'
+-            }
++            },
++            'programado': scheduled_service_schema['programado'],
++            'fechaYhora': {
++                'type': 'string',
++                'required': False,
++                'nullable': True,
++                # Formato esperado: "2026-10-22T14:30:00-06:00"
++            },
+         },
+         'nullable': False,
+         'required': True,
+diff --git a/apiserver/ix/whatsApp/utils/utils.py b/apiserver/ix/whatsApp/utils/utils.py
+index dca89d1d..16ac3a2a 100644
+--- a/apiserver/ix/whatsApp/utils/utils.py
++++ b/apiserver/ix/whatsApp/utils/utils.py
+@@ -113,20 +113,30 @@ def _is_scheduled(data: dict) -> bool:
+ 
+ 
+ def set_scheduled_ticket(data: dict) -> None:
+-    """Marca el primer ticket como programado cuando WA envía programado=SI con fecha_programada.
++    """
++    Actualiza el ticket con la información de programación si corresponde.
+ 
+-    fecha_programada llega en hora local sin zona; programdate se envía en UTC como en el
+-    flujo manual del admin, y el comentario conserva la hora local.
++    Parameters:
++        data (dict): Diccionario que contiene la información del ticket y la programación.
++    Returns:
++        None
+     """
+-    if not (_is_scheduled(data) and data.get("fecha_programada")):
++    ticket = data["ticket"]
++    if _is_scheduled(ticket) and ticket.get("fechaYhora"):
++        fecha_texto = ticket["fechaYhora"]
++    elif _is_scheduled(data) and data.get("fecha_programada"):
++        fecha_texto = data["fecha_programada"]
++    else:
+         return
+-    fecha = datetime.strptime(data["fecha_programada"][:19], "%Y-%m-%dT%H:%M:%S")
+-    fecha_utc = config.K2_TIMEZONE.localize(fecha).astimezone(pytz.utc)
+-    data["ticket"].update({
++    fecha = datetime.fromisoformat(fecha_texto)
++    if fecha.tzinfo is None:
++        fecha = config.K2_TIMEZONE.localize(fecha)
++    fecha_local = fecha.astimezone(config.K2_TIMEZONE)
++    ticket.update({
+         "programmed": 1,
+-        "programdate": fecha_utc.strftime("%Y-%m-%dT%H:%M:%S"),
++        "programdate": fecha.astimezone(pytz.utc).strftime("%Y-%m-%dT%H:%M:%S"),
+         "program_type": m.AssistanceProgrammingType.COORDINATION,
+-        "program_comment": f"Programado: {fecha:%d-%m-%Y %H:%M}",
++        "program_comment": f"Programado: {fecha_local:%d-%m-%Y %H:%M}",
+     })
+ 
+ 
+@@ -148,7 +158,7 @@ def _get_home_plans_typologies() -> list:
+             return _json.loads(cached)
+     except Exception as e:
+         logging.exception(
+-            f"[HOME_PLANS_CACHE] Redis no disponible, consultando BD: {e}"
++            "[HOME_PLANS_CACHE] Redis no disponible, consultando BD"
+         )
+ 
+     typologies = get_typologys("home_plans")["data"][0]["typologies"]
+@@ -159,7 +169,8 @@ def _get_home_plans_typologies() -> list:
+             _HOME_PLANS_CACHE_KEY, _json.dumps(typologies), ex=_HOME_PLANS_CACHE_TTL
+         )
+         logging.warning(
+-            f"[HOME_PLANS_CACHE] Typologías guardadas en Redis (TTL={_HOME_PLANS_CACHE_TTL}s)"
++            "[HOME_PLANS_CACHE] Tipologías guardadas en Redis (TTL=%ss)",
++            _HOME_PLANS_CACHE_TTL,
+         )
+     except Exception as e:
+         logging.exception(f"[HOME_PLANS_CACHE] No se pudo guardar en Redis: {e}")

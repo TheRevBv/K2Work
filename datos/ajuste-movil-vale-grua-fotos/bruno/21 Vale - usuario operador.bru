@@ -1,0 +1,24 @@
+meta {
+  name: Vale - usuario operador
+  type: http
+  seq: 21
+}
+
+post {
+  url: {{baseUrl}}/v2/ajuste-movil/cases/{{caseId}}/tow-vouchers
+  body: multipartForm
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:multipart-form {
+  file: @file(archivos/vale.pdf)
+  voucher_number: VG-OPERADOR
+}
+
+assert {
+  res.status: eq 403
+}

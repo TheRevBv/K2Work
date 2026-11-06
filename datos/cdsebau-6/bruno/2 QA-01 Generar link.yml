@@ -1,0 +1,38 @@
+info:
+  name: "QA-01 Generar link"
+  type: http
+  seq: 2
+
+http:
+  method: POST
+  url: "{{baseUrl}}/api/shortlink/test"
+  headers:
+    - name: "Content-Type"
+      value: "application/json"
+  body:
+    type: json
+    data: |-
+      {
+        "target_url": "{{targetUrl}}"
+      }
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        const u = res.getBody().short_url; if (u) bru.setVar('code', u.split('/s/')[1]);
+        test("res.getStatus() === 200", () => expect(res.getStatus() === 200).to.be.true);
+        test("/\\/s\\/[A-Za-z0-9_-]{7}$/.test(res.getBody().short_url)", () => expect(/\/s\/[A-Za-z0-9_-]{7}$/.test(res.getBody().short_url)).to.be.true);
+
+docs:
+  content: |-
+    Esperado: 200 con short_url `<dominio>/s/<7 chars>`; guarda code.
+  type: text/markdown
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

@@ -1,0 +1,12 @@
+- generic [ref=e4]:
+  - generic [ref=e5]:
+    - text: Correo
+    - textbox "Email" [ref=e6]
+  - generic [ref=e7]:
+    - text: Contraseña
+    - textbox "Contraseña" [ref=e8]
+  - button "Iniciar sesión" [ref=e10] [cursor=pointer]
+  - button "Microsoft Iniciar sesión con Microsoft" [ref=e12] [cursor=pointer]:
+    - img "Microsoft" [ref=e13]
+    - generic [ref=e14]: Iniciar sesión con Microsoft
+  - paragraph [ref=e15]: ¿Olvide mi Contraseña? Recuperar Contraseña

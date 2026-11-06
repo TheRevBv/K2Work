@@ -1,0 +1,32 @@
+opencollection: 1.0.0
+
+info:
+  name: "CDSEBAU-6 ShortLink"
+
+request:
+  auth:
+    type: bearer
+    token: "{{k2_token}}"
+  variables:
+    - name: "baseUrl"
+      value: "http://127.0.0.1:8080"
+    - name: "user"
+      value: "joshua.morinsalazar@chubb.com"
+    - name: "pass"
+      value: "{{process.env.K2_PASS}}"
+    - name: "targetUrl"
+      value: "https://www.google.com/maps?q=19.4326,-99.1332"
+    - name: "code"
+      value: ""
+
+docs:
+  content: |-
+    Pruebas del acortador propio (reemplazo de Cuttly). Rama feat/cdsebau-6-shortlink.
+    Verificar filas con `bin/k2-sql <perfil> -f datos/cdsebau-6/01-short-links-recientes.sql`.
+  type: text/markdown
+bundled: false
+extensions:
+  bruno:
+    ignore:
+      - node_modules
+      - .git

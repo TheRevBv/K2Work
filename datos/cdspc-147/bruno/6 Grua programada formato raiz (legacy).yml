@@ -1,0 +1,50 @@
+info:
+  name: "Grua programada formato raiz (legacy)"
+  type: http
+  seq: 6
+
+http:
+  method: POST
+  url: "{{baseUrl}}/api/v2/wa/create_ticket"
+  headers:
+    - name: "Content-Type"
+      value: "application/json"
+  body:
+    type: json
+    data: |-
+      {
+        "ClaveId": "{{clave}}",
+        "PolizaId": "{{poliza}}",
+        "NumeroInciso": "{{inciso}}",
+        "phone": "4442888124",
+        "country_phone_code": "52",
+        "ticket": {
+          "service_id": 332,
+          "latitude": 22.1119428,
+          "longitude": -101.0176936,
+          "comment": "QA CDSPC-147 ¿El volante se mueve normal? 0_Sí\nPlacas UXC109C\nColor del auto Negro"
+        },
+        "latitude": 22.15231334,
+        "longitude": -101.00748321,
+        "programado": "SI",
+        "fecha_programada": "2026-10-22T14:30:00"
+      }
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        test("res.getStatus() === 200", () => expect(res.getStatus() === 200).to.be.true);
+
+docs:
+  content: |-
+    Compatibilidad con programado/fecha_programada en la raíz. Esperado igual al caso 1.
+  type: text/markdown
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

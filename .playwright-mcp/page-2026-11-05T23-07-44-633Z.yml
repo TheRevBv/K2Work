@@ -1,0 +1,62 @@
+- generic [ref=e3]:
+  - banner [ref=e5]:
+    - link "Chubb — Ir al inicio" [ref=e6] [cursor=pointer]:
+      - /url: /
+      - img "Chubb" [ref=e7]
+  - alert [ref=e9]:
+    - generic [ref=e10]: "Advertencia: Para usar el servicio de Auto Relevo tu siniestro debe tener mínimo 48 horas de haber sido reportado ante Chubb."
+    - button "Cerrar" [ref=e11] [cursor=pointer]: ✕
+  - main [ref=e12]:
+    - generic [ref=e14]:
+      - generic [ref=e16]:
+        - img "Chubb" [ref=e17]
+        - heading "Solicita tu vehículo de Autorelevo" [level=1] [ref=e19]: Solicita tu vehículo deAutorelevo
+        - paragraph [ref=e20]: Protección y movilidad cuando más lo necesitas.
+      - generic [ref=e23]:
+        - heading "Bienvenido al servicio de Autorelevo" [level=2] [ref=e24]: Bienvenido al serviciode Autorelevo
+        - paragraph [ref=e25]: ¿Deseas iniciar una nueva solicitud o consultar el estatus de tu folio?
+        - button "Iniciar solicitud" [ref=e26] [cursor=pointer]
+        - button "Consultar estatus" [ref=e27] [cursor=pointer]
+        - separator [ref=e28]
+        - paragraph [ref=e29]: ¿Tienes problemas para entrar?
+        - paragraph [ref=e30]:
+          - text: Comunícate al
+          - link "81 2000 2020" [ref=e31] [cursor=pointer]:
+            - /url: tel:8120002020
+  - contentinfo [ref=e33]:
+    - generic [ref=e34]:
+      - link "Chubb" [ref=e35] [cursor=pointer]:
+        - /url: /
+        - img "Chubb" [ref=e36]
+      - generic [ref=e37]:
+        - link "81 2000 2020" [ref=e38] [cursor=pointer]:
+          - /url: tel:8120002020
+          - generic [aria-hidden] [ref=e40]: ☏
+          - text: 81 2000 2020
+        - link "Contáctanos" [ref=e41] [cursor=pointer]:
+          - /url: mailto:autorelevo@chubb.com
+          - generic [aria-hidden] [ref=e43]: ✉
+          - text: Contáctanos
+      - generic [ref=e44]:
+        - link "Facebook" [ref=e45] [cursor=pointer]:
+          - /url: "#"
+        - link "Twitter / X" [ref=e48] [cursor=pointer]:
+          - /url: "#"
+        - link "LinkedIn" [ref=e51] [cursor=pointer]:
+          - /url: "#"
+        - link "YouTube" [ref=e55] [cursor=pointer]:
+          - /url: "#"
+        - link "Instagram" [ref=e59] [cursor=pointer]:
+          - /url: "#"
+      - generic [ref=e63]: Español ▾
+    - generic [ref=e67]:
+      - generic [ref=e68]: © 2026 Chubb
+      - link "Aviso de privacidad" [ref=e69] [cursor=pointer]:
+        - /url: "#"
+      - link "Términos y condiciones" [ref=e70] [cursor=pointer]:
+        - /url: "#"
+      - link "CNBV" [ref=e71] [cursor=pointer]:
+        - /url: "#"
+      - link "CONDUSEF" [ref=e72] [cursor=pointer]:
+        - /url: "#"
+    - paragraph [ref=e73]: Chubb Seguros México, S.A. Institución de seguros regulada por la Comisión Nacional de Seguros y Fianzas. Todos los derechos reservados.

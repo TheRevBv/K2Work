@@ -1,0 +1,81 @@
+- generic [ref=f1e3]:
+  - banner [ref=f1e5]:
+    - link "Chubb — Ir al inicio" [ref=f1e6] [cursor=pointer]:
+      - /url: /
+      - img "Chubb" [ref=f1e7]
+  - alert [ref=f1e9]:
+    - generic [ref=f1e10]: "Advertencia: Para usar el servicio de Auto Relevo tu siniestro debe tener mínimo 48 horas de haber sido reportado ante Chubb."
+    - button "Cerrar" [ref=f1e11] [cursor=pointer]: ✕
+  - main [ref=f1e12]:
+    - generic [ref=f1e14]:
+      - complementary [ref=f1e15]:
+        - generic [ref=f1e16]:
+          - img "Chubb" [ref=f1e17]
+          - generic [ref=f1e18]:
+            - paragraph [ref=f1e19]: Servicio de Autorelevo
+            - paragraph [ref=f1e20]: Identificación del asegurado
+        - link [ref=f1e27] [cursor=pointer]:
+          - /url: /estado
+          - text: ¿Tienes un folio asignado?
+          - strong [ref=f1e28]: Consultar estatus →
+      - main [ref=f1e29]:
+        - generic [ref=f1e30]:
+          - heading "Identificación del asegurado" [level=1] [ref=f1e31]
+          - paragraph [ref=f1e32]:
+            - text: ¿Necesitas ayuda? Llámanos al
+            - link "81 1423 9106" [ref=f1e33] [cursor=pointer]:
+              - /url: tel:8114239106
+          - generic [ref=f1e34]:
+            - generic [ref=f1e35]:
+              - generic [ref=f1e36]: Número de Póliza
+              - textbox "Ej. CHUPNX680243" [ref=f1e38]: BE43122060
+              - paragraph [ref=f1e39]: Encuéntralo en tu carátula de póliza Chubb
+            - generic [ref=f1e40]:
+              - generic [ref=f1e41]: Inciso
+              - textbox "Ej. 1" [ref=f1e43]: "1"
+            - generic [ref=f1e44]:
+              - generic [ref=f1e45]: Número del asegurado
+              - textbox "Ej. 123456789" [ref=f1e47]: "18669228"
+            - alert [ref=f1e94]:
+              - paragraph [ref=f1e96]: La póliza no cuenta con las coberturas de autorelevo, favor de contactar con un agente. [HTTP 400]
+              - button "Cerrar" [ref=f1e97] [cursor=pointer]: ✕
+            - generic [ref=f1e48]:
+              - button "Cancelar" [ref=f1e49] [cursor=pointer]
+              - button "Continuar" [ref=f1e50] [cursor=pointer]
+  - contentinfo [ref=f1e52]:
+    - generic [ref=f1e53]:
+      - link "Chubb" [ref=f1e54] [cursor=pointer]:
+        - /url: /
+        - img "Chubb" [ref=f1e55]
+      - generic [ref=f1e56]:
+        - link "81 2000 2020" [ref=f1e57] [cursor=pointer]:
+          - /url: tel:8120002020
+          - generic [aria-hidden] [ref=f1e59]: ☏
+          - text: 81 2000 2020
+        - link "Contáctanos" [ref=f1e60] [cursor=pointer]:
+          - /url: mailto:autorelevo@chubb.com
+          - generic [aria-hidden] [ref=f1e62]: ✉
+          - text: Contáctanos
+      - generic [ref=f1e63]:
+        - link "Facebook" [ref=f1e64] [cursor=pointer]:
+          - /url: "#"
+        - link "Twitter / X" [ref=f1e67] [cursor=pointer]:
+          - /url: "#"
+        - link "LinkedIn" [ref=f1e70] [cursor=pointer]:
+          - /url: "#"
+        - link "YouTube" [ref=f1e74] [cursor=pointer]:
+          - /url: "#"
+        - link "Instagram" [ref=f1e78] [cursor=pointer]:
+          - /url: "#"
+      - generic [ref=f1e82]: Español ▾
+    - generic [ref=f1e86]:
+      - generic [ref=f1e87]: © 2026 Chubb
+      - link "Aviso de privacidad" [ref=f1e88] [cursor=pointer]:
+        - /url: "#"
+      - link "Términos y condiciones" [ref=f1e89] [cursor=pointer]:
+        - /url: "#"
+      - link "CNBV" [ref=f1e90] [cursor=pointer]:
+        - /url: "#"
+      - link "CONDUSEF" [ref=f1e91] [cursor=pointer]:
+        - /url: "#"
+    - paragraph [ref=f1e92]: Chubb Seguros México, S.A. Institución de seguros regulada por la Comisión Nacional de Seguros y Fianzas. Todos los derechos reservados.

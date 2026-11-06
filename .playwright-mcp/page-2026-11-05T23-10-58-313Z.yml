@@ -1,0 +1,107 @@
+- generic [ref=f3e3]:
+  - banner [ref=f3e5]:
+    - link "Chubb — Ir al inicio" [ref=f3e6] [cursor=pointer]:
+      - /url: /
+      - img "Chubb" [ref=f3e7]
+    - button "Cerrar sesión" [ref=f3e8] [cursor=pointer]
+  - alert [ref=f3e10]:
+    - generic [ref=f3e11]: "Advertencia: Para usar el servicio de Auto Relevo tu siniestro debe tener mínimo 48 horas de haber sido reportado ante Chubb."
+    - button "Cerrar" [ref=f3e12] [cursor=pointer]: ✕
+  - main [ref=f3e13]:
+    - generic [ref=f3e16]:
+      - complementary [ref=f3e17]:
+        - generic [ref=f3e18]:
+          - img "Chubb" [ref=f3e19]
+          - generic [ref=f3e20]:
+            - paragraph [ref=f3e21]: Servicio de Autorelevo
+            - paragraph [ref=f3e22]: Pérdida total
+            - paragraph [ref=f3e23]: Póliza CE50002253
+            - paragraph [ref=f3e24]: "Plan: Plus"
+          - progressbar [ref=f3e27]:
+            - generic [ref=f3e29]:
+              - generic "Tipo de servicio — done" [ref=f3e31]:
+                - generic [aria-hidden] [ref=f3e33]: ✓
+              - generic [ref=f3e35]: Tipo de servicio
+            - generic [ref=f3e38]:
+              - generic "Datos del cliente — done" [ref=f3e165]:
+                - generic [aria-hidden] [ref=f3e167]: ✓
+              - generic [ref=f3e43]: Datos del cliente
+            - generic [ref=f3e46]:
+              - generic "Documentos — active" [ref=f3e168]:
+                - generic [aria-hidden] [ref=f3e49]: "3"
+              - generic [ref=f3e51]: Documentos
+            - generic [ref=f3e54]:
+              - generic "Revisión — pending" [ref=f3e56]:
+                - generic [aria-hidden] [ref=f3e57]: "4"
+              - generic [ref=f3e58]: Revisión
+        - button "Cancelar proceso" [ref=f3e61] [cursor=pointer]
+      - main [ref=f3e62]:
+        - generic [ref=f3e169]:
+          - generic [ref=f3e170]:
+            - paragraph [ref=f3e171]: Paso 3 de 4
+            - heading "Carga de documentos" [level=1] [ref=f3e172]
+            - paragraph [ref=f3e173]: Sube los documentos requeridos para tu solicitud
+          - alert [ref=f3e175]:
+            - paragraph [ref=f3e177]:
+              - text: Debes subir tu documentación dentro de los próximos
+              - strong [ref=f3e178]: 15 días hábiles
+              - text: . De lo contrario tu folio será cancelado.
+          - paragraph [ref=f3e179]: Tamaño máximo 10 MB. Solo .pdf, .png, .jpg y .docx
+          - generic [ref=f3e180]:
+            - generic "Subir Identificación oficial vigente" [active] [ref=f3e202]:
+              - generic [ref=f3e183]:
+                - generic [ref=f3e184]: Identificación oficial vigente
+                - generic [ref=f3e203]: ine.pdf · 0 KB
+              - generic [ref=f3e204]:
+                - generic [aria-hidden] [ref=f3e206]: ✓
+                - button "Eliminar archivo" [ref=f3e207] [cursor=pointer]:
+                  - generic [aria-hidden] [ref=f3e209]: ✕
+              - button "Archivo para Identificación oficial vigente"
+            - button "Subir Licencia de conducir vigente" [ref=f3e188] [cursor=pointer]:
+              - generic [ref=f3e189]: Licencia de conducir vigente
+              - generic [aria-hidden] [ref=f3e192]: •
+              - button "Archivo para Licencia de conducir vigente"
+            - button "Subir Carátula de la póliza" [ref=f3e194] [cursor=pointer]:
+              - generic [ref=f3e195]: Carátula de la póliza
+              - generic [aria-hidden] [ref=f3e198]: •
+              - button "Archivo para Carátula de la póliza"
+          - generic [ref=f3e199]:
+            - button "Regresar" [ref=f3e200] [cursor=pointer]
+            - button "Enviar solicitud" [disabled] [ref=f3e201]
+  - contentinfo [ref=f3e124]:
+    - generic [ref=f3e125]:
+      - link "Chubb" [ref=f3e126] [cursor=pointer]:
+        - /url: /
+        - img "Chubb" [ref=f3e127]
+      - generic [ref=f3e128]:
+        - link "81 2000 2020" [ref=f3e129] [cursor=pointer]:
+          - /url: tel:8120002020
+          - generic [aria-hidden] [ref=f3e131]: ☏
+          - text: 81 2000 2020
+        - link "Contáctanos" [ref=f3e132] [cursor=pointer]:
+          - /url: mailto:autorelevo@chubb.com
+          - generic [aria-hidden] [ref=f3e134]: ✉
+          - text: Contáctanos
+      - generic [ref=f3e135]:
+        - link "Facebook" [ref=f3e136] [cursor=pointer]:
+          - /url: "#"
+        - link "Twitter / X" [ref=f3e139] [cursor=pointer]:
+          - /url: "#"
+        - link "LinkedIn" [ref=f3e142] [cursor=pointer]:
+          - /url: "#"
+        - link "YouTube" [ref=f3e146] [cursor=pointer]:
+          - /url: "#"
+        - link "Instagram" [ref=f3e150] [cursor=pointer]:
+          - /url: "#"
+      - generic [ref=f3e154]: Español ▾
+    - generic [ref=f3e158]:
+      - generic [ref=f3e159]: © 2026 Chubb
+      - link "Aviso de privacidad" [ref=f3e160] [cursor=pointer]:
+        - /url: "#"
+      - link "Términos y condiciones" [ref=f3e161] [cursor=pointer]:
+        - /url: "#"
+      - link "CNBV" [ref=f3e162] [cursor=pointer]:
+        - /url: "#"
+      - link "CONDUSEF" [ref=f3e163] [cursor=pointer]:
+        - /url: "#"
+    - paragraph [ref=f3e164]: Chubb Seguros México, S.A. Institución de seguros regulada por la Comisión Nacional de Seguros y Fianzas. Todos los derechos reservados.

@@ -1,0 +1,34 @@
+info:
+  name: 5 - SubstituteExp
+  type: http
+  seq: 6
+
+http:
+  method: POST
+  url: https://sit.latam.studiogateway.chubb.com/digital.data.middlewareservicespolicy/Policy/SubstituteExp
+  headers:
+    - name: Content-Type
+      value: application/json
+    - name: Authorization
+      value: <TOKEN_TYPE> <ACCESS_TOKEN>
+    - name: apiVersion
+      value: "1"
+  body:
+    type: json
+    data: |-
+      {
+          "typeSearch": 3,
+          "Poliza": "{{policyNumber}}",
+          "ClaveId": "{{claveId}}",
+          "NumeroInciso": "1"
+      }
+  auth:
+    type: bearer
+    token: "{{accessToken}}"
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

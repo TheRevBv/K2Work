@@ -1,0 +1,27 @@
+info:
+  name: "QA-03 Codigo inexistente"
+  type: http
+  seq: 4
+
+http:
+  method: GET
+  url: "{{baseUrl}}/s/XXXXXXX"
+  auth: none
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        test("res.getStatus() === 302", () => expect(res.getStatus() === 302).to.be.true);
+
+docs:
+  content: |-
+    Esperado: 302 a SYSTEM_URL, sin 500.
+  type: text/markdown
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: false
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

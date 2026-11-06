@@ -1,0 +1,35 @@
+opencollection: 1.0.0
+
+info:
+  name: "Importador genérico (AVASA)"
+
+request:
+  auth:
+    type: bearer
+    token: "{{k2_token}}"
+  variables:
+    - name: "baseUrl"
+      value: "http://127.0.0.1:8080"
+    - name: "user"
+      value: "joshua.morinsalazar@chubb.com"
+    - name: "pass"
+      value: "{{process.env.K2_PASS}}"
+    - name: "layout"
+      value: "avasa_contratos"
+
+docs:
+  content: |-
+    Importador genérico de K2 (`POST /api/importador/{layout}`, `GET /api/importador/layouts`). Rama `feat/autorelevo-reporte-avasa`; correr el apiserver local (apunta a dev por el proxy 3307).
+
+    Archivos sintéticos en `archivos/` (contratos `ZZB*`, sin datos reales). El caso feliz **escribe en dev**: limpiar con `bin/k2-sql dev -f datos/feat-autorelevo-reporte-avasa/bruno/limpiar.sql --commit` (requiere confirmación).
+
+    El 403 usa la carpeta *Sin rol*: define `K2_USER_SIN_ROL` y `K2_PASS_SIN_ROL` en `~/.config/k2work/bruno/k2.env` con un usuario sin rol admin/supervisor.
+
+    Errores: `{"error": {"data": [...], "detail": ..., "total_errores": N}}`.
+  type: text/markdown
+bundled: false
+extensions:
+  bruno:
+    ignore:
+      - node_modules
+      - .git

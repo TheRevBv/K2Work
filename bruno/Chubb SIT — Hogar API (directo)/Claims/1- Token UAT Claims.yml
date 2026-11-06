@@ -1,0 +1,39 @@
+info:
+  name: 1- Token UAT Claims
+  type: http
+  seq: 3
+
+http:
+  method: POST
+  url: https://uat.latam.studiogateway.chubb.com/enterprise.operations.authorization
+  headers:
+    - name: Content-Type
+      value: application/json
+    - name: App_ID
+      value: "{{process.env.CHUBB_UAT_APP_ID}}"
+    - name: App_Key
+      value: "{{process.env.CHUBB_UAT_APP_KEY}}"
+    - name: Resource
+      value: "{{process.env.CHUBB_UAT_RESOURCE}}"
+    - name: apiVersion
+      value: "1"
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        test('Status 200', () => expect(res.getStatus()).to.equal(200));
+        const body = res.getBody();
+        test('access_token presente', () => expect(body.access_token).to.be.a('string').and.not.empty);
+        if (body.access_token) {
+          bru.setCollectionVar('accessToken2', body.access_token);
+          console.log('Token guardado. Expira en:', body.expires_in, 'segundos');
+        }
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

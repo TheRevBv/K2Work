@@ -1,0 +1,34 @@
+info:
+  name: "Sin fila de totales"
+  type: http
+  seq: 11
+
+http:
+  method: POST
+  url: "{{baseUrl}}/api/importador/{{layout}}"
+  body:
+    type: multipart-form
+    data:
+      - name: "file"
+        type: file
+        value:
+          - "archivos/05-sin-fila-total.xlsx"
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        test("res.getStatus() === 400", () => expect(res.getStatus() === 400).to.be.true);
+
+docs:
+  content: |-
+    Esperado: 400 'El archivo no trae la fila de totales'.
+  type: text/markdown
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

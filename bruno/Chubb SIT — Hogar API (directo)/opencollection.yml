@@ -1,0 +1,61 @@
+opencollection: 1.0.0
+
+info:
+  name: Chubb SIT — Hogar API
+config:
+  proxy:
+    inherit: true
+    config:
+      protocol: http
+      hostname: ""
+      port: ""
+      auth:
+        username: ""
+        password: ""
+      bypassProxy: ""
+
+request:
+  variables:
+    - name: chubbSitBase
+      value: https://sit.latam.studiogateway.chubb.com
+    - name: tokenUrl
+      value: https://sit.latam.studiogateway.chubb.com/enterprise.operations.authorization
+    - name: appId
+      value: "{{process.env.CHUBB_SIT_APP_ID}}"
+    - name: appKey
+      value: "{{process.env.CHUBB_SIT_APP_KEY}}"
+    - name: resource
+      value: "{{process.env.CHUBB_SIT_RESOURCE}}"
+    - name: accessToken
+      value: ""
+    - name: policyNumber
+      value: CE50002194
+    - name: claveId
+      value: ""
+    - name: url_claims
+      value: ""
+    - name: chubb_token
+      value: ""
+    - name: accessToken2
+      value: ""
+    - name: policyNumberS6
+      value: CE50001692
+    - name: chubb_sit_token
+      value: eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiIsImtpZCI6InJ5QngtNjVqTm94SDRGUUhfNnphck5qYU5mNCJ9.eyJhdWQiOiJiNmY4N2U3Mi1kNTJjLTRkZGEtYjQ2Yy04ZWVlMzE0OTUzMTAiLCJpc3MiOiJodHRwczovL2xvZ2luLm1pY3Jvc29mdG9ubGluZS5jb20vNjRlYmY5ZjEtNGU5My00MDBmLTkwZjItM2U4YWU1MGU0OGY1L3YyLjAiLCJpYXQiOjE3OTM5MjEwMzIsIm5iZiI6MTc5MzkyMTAzMiwiZXhwIjoxNzkzOTI0OTMyLCJhaW8iOiJrMk5nWUpEZTluQlhTWmRvaFZuTzFwci9Sb0o2M2pIM3BHMzFjN3czeWh2b1RhaVMrZ1lBIiwiYXpwIjoiMjVmOTljNDktMjM5Ny00OTRiLWIwYzItODA0MWE4MWE2YmUwIiwiYXpwYWNyIjoiMSIsIm9pZCI6IjBmYmEzZWRkLTBmODUtNDFhNi1hYzFlLTQ1YWNhNmNmYTdkOSIsInJoIjoiMS5BUjBBOGZuclpKTk9EMENROGo2SzVRNUk5WEotLUxZczFkcE50R3lPN2pGSlV4QUFBQUFkQUEuIiwicm9sZXMiOlsiYWNjZXNzb3BlcmF0aW9ucyJdLCJzdWIiOiIwZmJhM2VkZC0wZjg1LTQxYTYtYWMxZS00NWFjYTZjZmE3ZDkiLCJ0aWQiOiI2NGViZjlmMS00ZTkzLTQwMGYtOTBmMi0zZThhZTUwZTQ4ZjUiLCJ1dGkiOiIyZjlQaXVEblMwYU82azduOUNCaEFBIiwidmVyIjoiMi4wIiwieG1zX2Z0ZCI6Im1NYUdkc3FfbjY0UkRSM2U1WWdmSmVPMW1FeFNoa3FfNXB4LTFrUDFpX1VCZFhOM1pYTjBNeTFrYzIxeiJ9.A3jtIB3m0VRu8wQ3NDLSh8wFY6YH-IbvoyOgjxv5khpfayfrHfUurDpoi8n0GV--Xt0rYdWlParmn7vGEDvYAKjUZl2dUYW5gpL1XPNWtdyoShTzr6nCLsMYmZgmw349pRcH6AXbyGnWKiWMSJUDbKbWGpfOGOblvrH_Oi5haYpN3ZAP6GTA-6-Kg8vRRPbMTkCBMEPy6gdSrZa2DX5f2ps2-G9wH2_6g-8SxSeHvQeiVnjOnKp4uGrmxPiKxGjUSHGXAu6SIYxO8qJ1ojy3rjl67gA_yEN9UTH8q9BYEoFryZ1FREz2KtJVuiYhvOCkNXrzQvjF9nIwtnTGbM8ang
+
+docs:
+  content: |-
+    Pruebas directas al API Gateway de Chubb SIT para pólizas Hogar.
+    Usar para encontrar pólizas válidas en SIT antes de probar en K2.
+
+    Flujo:
+    1. POST Token SIT → guarda token automáticamente
+    2. GET Policy Detail → buscar póliza con PolicyNumber
+    3. POST Policy Validate → validar servicios disponibles
+  type: text/markdown
+bundled: false
+extensions:
+  bruno:
+    ignore:
+      - node_modules
+      - .git

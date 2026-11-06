@@ -1,0 +1,19 @@
+meta {
+  name: Vale - sin token
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/v2/ajuste-movil/cases/{{caseId}}/tow-vouchers
+  body: multipartForm
+  auth: none
+}
+
+body:multipart-form {
+  file: @file(archivos/vale.pdf)
+}
+
+assert {
+  res.status: eq 401
+}

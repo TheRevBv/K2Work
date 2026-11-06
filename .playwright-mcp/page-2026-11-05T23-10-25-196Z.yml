@@ -1,0 +1,97 @@
+- generic [ref=f2e3]:
+  - banner [ref=f2e5]:
+    - link "Chubb — Ir al inicio" [ref=f2e6] [cursor=pointer]:
+      - /url: /
+      - img "Chubb" [ref=f2e7]
+    - button "Cerrar sesión" [ref=f2e8] [cursor=pointer]
+  - alert [ref=f2e10]:
+    - generic [ref=f2e11]: "Advertencia: Para usar el servicio de Auto Relevo tu siniestro debe tener mínimo 48 horas de haber sido reportado ante Chubb."
+    - button "Cerrar" [ref=f2e12] [cursor=pointer]: ✕
+  - main [ref=f2e13]:
+    - generic [ref=f2e16]:
+      - complementary [ref=f2e17]:
+        - generic [ref=f2e18]:
+          - img "Chubb" [ref=f2e19]
+          - generic [ref=f2e20]:
+            - paragraph [ref=f2e21]: Servicio de Autorelevo
+            - paragraph [ref=f2e22]: Póliza CE50002253
+            - paragraph [ref=f2e23]: "Plan: Plus"
+          - progressbar [ref=f2e26]:
+            - generic [ref=f2e28]:
+              - generic "Tipo de servicio — active" [ref=f2e30]:
+                - generic [aria-hidden] [ref=f2e31]: "1"
+              - generic [ref=f2e33]: Tipo de servicio
+            - generic [ref=f2e36]:
+              - generic "Datos del cliente — pending" [ref=f2e38]:
+                - generic [aria-hidden] [ref=f2e39]: "2"
+              - generic [ref=f2e41]: Datos del cliente
+            - generic [ref=f2e44]:
+              - generic "Documentos — pending" [ref=f2e46]:
+                - generic [aria-hidden] [ref=f2e47]: "3"
+              - generic [ref=f2e49]: Documentos
+            - generic [ref=f2e52]:
+              - generic "Revisión — pending" [ref=f2e54]:
+                - generic [aria-hidden] [ref=f2e55]: "4"
+              - generic [ref=f2e56]: Revisión
+        - button "Cancelar proceso" [ref=f2e59] [cursor=pointer]
+      - main [ref=f2e60]:
+        - generic [ref=f2e61]:
+          - generic [ref=f2e62]:
+            - paragraph [ref=f2e63]: Paso 1 de 4
+            - heading "Tipo de servicio" [level=1] [ref=f2e64]
+            - paragraph [ref=f2e65]: Selecciona el motivo de tu solicitud de Auto Relevo
+          - generic [ref=f2e66]:
+            - button "Pérdida total Asistencia cuando el vehículo queda inservible por daños irreparables o robo total." [active] [pressed] [ref=f2e68] [cursor=pointer]:
+              - generic [ref=f2e70]:
+                - generic [ref=f2e71]: Pérdida total
+                - generic [ref=f2e72]: Asistencia cuando el vehículo queda inservible por daños irreparables o robo total.
+            - button "Pérdida parcial Apoyo cuando el vehículo sufre daños parciales y puede ser reparado." [ref=f2e74] [cursor=pointer]:
+              - generic [ref=f2e76]:
+                - generic [ref=f2e77]: Pérdida parcial
+                - generic [ref=f2e78]: Apoyo cuando el vehículo sufre daños parciales y puede ser reparado.
+            - button "Detención legal Asistencia cuando el vehículo es retenido por autoridades." [ref=f2e80] [cursor=pointer]:
+              - generic [ref=f2e82]:
+                - generic [ref=f2e83]: Detención legal
+                - generic [ref=f2e84]: Asistencia cuando el vehículo es retenido por autoridades.
+            - button "Avería mecánica Ayuda cuando el vehículo presenta falla mecánica mayor diagnosticada." [ref=f2e86] [cursor=pointer]:
+              - generic [ref=f2e88]:
+                - generic [ref=f2e89]: Avería mecánica
+                - generic [ref=f2e90]: Ayuda cuando el vehículo presenta falla mecánica mayor diagnosticada.
+          - button "Continuar" [ref=f2e92] [cursor=pointer]
+  - contentinfo [ref=f2e94]:
+    - generic [ref=f2e95]:
+      - link "Chubb" [ref=f2e96] [cursor=pointer]:
+        - /url: /
+        - img "Chubb" [ref=f2e97]
+      - generic [ref=f2e98]:
+        - link "81 2000 2020" [ref=f2e99] [cursor=pointer]:
+          - /url: tel:8120002020
+          - generic [aria-hidden] [ref=f2e101]: ☏
+          - text: 81 2000 2020
+        - link "Contáctanos" [ref=f2e102] [cursor=pointer]:
+          - /url: mailto:autorelevo@chubb.com
+          - generic [aria-hidden] [ref=f2e104]: ✉
+          - text: Contáctanos
+      - generic [ref=f2e105]:
+        - link "Facebook" [ref=f2e106] [cursor=pointer]:
+          - /url: "#"
+        - link "Twitter / X" [ref=f2e109] [cursor=pointer]:
+          - /url: "#"
+        - link "LinkedIn" [ref=f2e112] [cursor=pointer]:
+          - /url: "#"
+        - link "YouTube" [ref=f2e116] [cursor=pointer]:
+          - /url: "#"
+        - link "Instagram" [ref=f2e120] [cursor=pointer]:
+          - /url: "#"
+      - generic [ref=f2e124]: Español ▾
+    - generic [ref=f2e128]:
+      - generic [ref=f2e129]: © 2026 Chubb
+      - link "Aviso de privacidad" [ref=f2e130] [cursor=pointer]:
+        - /url: "#"
+      - link "Términos y condiciones" [ref=f2e131] [cursor=pointer]:
+        - /url: "#"
+      - link "CNBV" [ref=f2e132] [cursor=pointer]:
+        - /url: "#"
+      - link "CONDUSEF" [ref=f2e133] [cursor=pointer]:
+        - /url: "#"
+    - paragraph [ref=f2e134]: Chubb Seguros México, S.A. Institución de seguros regulada por la Comisión Nacional de Seguros y Fianzas. Todos los derechos reservados.

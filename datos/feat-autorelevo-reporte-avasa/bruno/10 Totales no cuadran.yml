@@ -1,0 +1,34 @@
+info:
+  name: "Totales no cuadran"
+  type: http
+  seq: 10
+
+http:
+  method: POST
+  url: "{{baseUrl}}/api/importador/{{layout}}"
+  body:
+    type: multipart-form
+    data:
+      - name: "file"
+        type: file
+        value:
+          - "archivos/04-totales-no-cuadran.xlsx"
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        test("res.getStatus() === 400", () => expect(res.getStatus() === 400).to.be.true);
+
+docs:
+  content: |-
+    Esperado: 400; Total del contrato difiere en 1.00.
+  type: text/markdown
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

@@ -1,0 +1,35 @@
+info:
+  name: "Filas inválidas"
+  type: http
+  seq: 9
+
+http:
+  method: POST
+  url: "{{baseUrl}}/api/importador/{{layout}}"
+  body:
+    type: multipart-form
+    data:
+      - name: "file"
+        type: file
+        value:
+          - "archivos/03-filas-invalidas.xlsx"
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        test("res.getStatus() === 400", () => expect(res.getStatus() === 400).to.be.true);
+        test("res.getBody().error.total_errores >= 3", () => expect(res.getBody().error.total_errores >= 3).to.be.true);
+
+docs:
+  content: |-
+    Esperado: 400 con errores por fila (número inválido, fórmula, llave duplicada, llave vacía); no escribe nada.
+  type: text/markdown
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

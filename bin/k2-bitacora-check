@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# k2-bitacora-check — verifica que cada dia con viñetas "(N h)" sume 8 h.
+set -euo pipefail
+[ $# -eq 1 ] && [ -f "$1" ] || { echo "Uso: k2-bitacora-check <archivo.md>" >&2; exit 1; }
+
+awk '
+function flush() {
+  if (day != "" && has) {
+    printf "%s\t%.1f\t%s\n", day, sum, (sum == 8 ? "ok" : "DIFERENTE")
+    if (sum != 8) bad = 1
+  }
+}
+/^[0-9]+ de [[:alpha:]]+[[:space:]]*$/ { flush(); day = $0; sum = 0; has = 0; next }
+/^- \([0-9]+(\.[0-9]+)? h\)/ {
+  l = $0; sub(/^- \(/, "", l); sub(/ h\).*$/, "", l)
+  sum += l; has = 1
+}
+END { flush(); exit bad }
+' "$1"

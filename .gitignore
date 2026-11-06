@@ -1,0 +1,6 @@
+*.env
+.env*
+*.zip
+*.log
+.claude/settings.local.json.bak
+.superpowers/

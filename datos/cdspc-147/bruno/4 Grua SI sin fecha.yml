@@ -1,0 +1,49 @@
+info:
+  name: "Grua SI sin fecha"
+  type: http
+  seq: 4
+
+http:
+  method: POST
+  url: "{{baseUrl}}/api/v2/wa/create_ticket"
+  headers:
+    - name: "Content-Type"
+      value: "application/json"
+  body:
+    type: json
+    data: |-
+      {
+        "ClaveId": "{{clave}}",
+        "PolizaId": "{{poliza}}",
+        "NumeroInciso": "{{inciso}}",
+        "phone": "4442888124",
+        "country_phone_code": "52",
+        "ticket": {
+          "service_id": 332,
+          "latitude": 22.1119428,
+          "longitude": -101.0176936,
+          "programado": "SI",
+          "comment": "QA CDSPC-147 ¿El volante se mueve normal? 0_Sí\nPlacas UXC109C\nColor del auto Negro"
+        },
+        "latitude": 22.15231334,
+        "longitude": -101.00748321
+      }
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        test("res.getStatus() === 200", () => expect(res.getStatus() === 200).to.be.true);
+
+docs:
+  content: |-
+    Esperado: sin ticket_type 11.
+  type: text/markdown
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

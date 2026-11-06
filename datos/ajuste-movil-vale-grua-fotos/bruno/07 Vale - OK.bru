@@ -1,0 +1,26 @@
+meta {
+  name: Vale - OK
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/v2/ajuste-movil/cases/{{caseId}}/tow-vouchers
+  body: multipartForm
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:multipart-form {
+  file: @file(archivos/vale.pdf)
+  voucher_number: VG-0001
+}
+
+assert {
+  res.status: eq 201
+  res.body.data.caseId: isNumber
+  res.body.data.sha256: isString
+}

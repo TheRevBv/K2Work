@@ -1,0 +1,23 @@
+meta {
+  name: Vale - caso sin proveedor
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/v2/ajuste-movil/cases/{{caseIdSinProveedor}}/tow-vouchers
+  body: multipartForm
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:multipart-form {
+  file: @file(archivos/vale.pdf)
+}
+
+assert {
+  res.status: eq 409
+}

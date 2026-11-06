@@ -1,0 +1,29 @@
+diff --git a/autorelevo/src/app/features/solicitud/captura-info/captura-info.component.ts b/autorelevo/src/app/features/solicitud/captura-info/captura-info.component.ts
+index 3494dbd..d12d36f 100644
+--- a/autorelevo/src/app/features/solicitud/captura-info/captura-info.component.ts
++++ b/autorelevo/src/app/features/solicitud/captura-info/captura-info.component.ts
+@@ -210,7 +210,7 @@ const MOTIVO_LABELS: Record<MotivoSolicitud, string> = {
+                 type="button"
+                 cbButton
+                 [variant]="'primary'"
+-                [disabled]="loading()"
++                [disabled]="loading() || !documentosCompletos"
+                 (click)="onSubmit()"
+               >
+                 {{ loading() ? 'Enviando…' : 'Enviar solicitud' }}
+@@ -393,7 +393,15 @@ export class CapturaInfoComponent implements OnInit {
+     this.subidos.delete(docId);
+   }
+ 
++  protected get documentosCompletos(): boolean {
++    return this.documentos.length > 0 && this.documentos.every((d) => d.estado === 'subido');
++  }
++
+   protected onSubmit(): void {
++    if (!this.documentosCompletos) {
++      this.apiError.set('Adjunta todos los documentos requeridos antes de enviar la solicitud.');
++      return;
++    }
+     this.apiError.set(null);
+     this.loading.set(true);
+ 

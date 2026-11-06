@@ -1,0 +1,23 @@
+meta {
+  name: Vale - tipo no permitido
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/v2/ajuste-movil/cases/{{caseId}}/tow-vouchers
+  body: multipartForm
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:multipart-form {
+  file: @file(archivos/no-permitido.txt)
+}
+
+assert {
+  res.status: eq 400
+}

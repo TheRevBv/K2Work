@@ -1,0 +1,34 @@
+info:
+  name: Detalle de bien afectado
+  type: http
+  seq: 2
+
+http:
+  method: GET
+  url: "{{url_claims}}claims.gruas/Grua/detalle?SiniestroId=<SINIESTRO_ID>&BienSec=<BIEN_SEC>"
+  headers:
+    - name: Content-Type
+      value: application/json
+    - name: Ocp-Apim-Subscription-Key
+      value: "{{process.env.CHUBB_UAT_OCP_KEY}}"
+    - name: apiVersion
+      value: "1"
+    - name: Authorization
+      value: bearer <TOKEN>
+  params:
+    - name: SiniestroId
+      value: <SINIESTRO_ID>
+      type: query
+    - name: BienSec
+      value: <BIEN_SEC>
+      type: query
+  auth:
+    type: bearer
+    token: "{{accessToken2}}"
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

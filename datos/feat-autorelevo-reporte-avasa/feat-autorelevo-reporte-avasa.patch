@@ -1,0 +1,2467 @@
+From bf3f86ceb1996804020bcc621f8003c179f3e87d Mon Sep 17 00:00:00 2001
+From: JoshMorinDev <joshua.morinsalazar@chubb.com>
+Date: Mon, 26 Oct 2026 17:44:59 -0600
+Subject: [PATCH 01/12] feat(autorelevo): modelo AutorelevoContratoRenta
+
+---
+ .../auto_relevo_boleta/auto_relevo_boleta_models.py  | 12 ++++++++++++
+ apiserver/ix/tests/importador/__init__.py            |  0
+ .../tests/importador/test_modelo_contrato_renta.py   | 11 +++++++++++
+ apiserver/requirements.txt                           |  1 +
+ 4 files changed, 24 insertions(+)
+ create mode 100644 apiserver/ix/tests/importador/__init__.py
+ create mode 100644 apiserver/ix/tests/importador/test_modelo_contrato_renta.py
+
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_models.py b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_models.py
+index 1290d208..0e6a97d1 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_models.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_models.py
+@@ -157,6 +157,18 @@ class CostosAutorelevo(database.Model, Base, AuditEntity):
+         self.audit_deleted_at = datetime.now(timezone.utc)
+         self.audit_deleted_by = deleted_by
+ 
++class AutorelevoContratoRenta(database.Model, Base, AuditEntity):
++    __tablename__ = 'autorelevo_contrato_renta'
++
++    id = Column(Integer, primary_key=True, autoincrement=True)
++    contract_number = Column(String(20), unique=True, nullable=False)
++    numero_reserva = Column(String(20), nullable=True)
++    siniestro_folio = Column(String(30), nullable=True)
++    dias_renta = Column(DECIMAL(6, 2), nullable=False)
++    total_contrato = Column(DECIMAL(12, 2), nullable=False)
++    voucher_total = Column(DECIMAL(12, 2), nullable=False)
++    fecha_carga = Column(DateTime, nullable=False, default=datetime.utcnow)
++
+ class GrupoVehiculo(database.Model, Base, AuditEntity):
+     __tablename__ = 'grupos_vehiculos'
+ 
+diff --git a/apiserver/ix/tests/importador/__init__.py b/apiserver/ix/tests/importador/__init__.py
+new file mode 100644
+index 00000000..e69de29b
+diff --git a/apiserver/ix/tests/importador/test_modelo_contrato_renta.py b/apiserver/ix/tests/importador/test_modelo_contrato_renta.py
+new file mode 100644
+index 00000000..a717b969
+--- /dev/null
++++ b/apiserver/ix/tests/importador/test_modelo_contrato_renta.py
+@@ -0,0 +1,11 @@
++from ix.boletas_informativas.auto_relevo.api.auto_relevo_boleta.auto_relevo_boleta_models import (
++    AutorelevoContratoRenta,
++)
++
++
++def test_modelo_mapea_tabla_y_columnas():
++    columnas = set(AutorelevoContratoRenta.__table__.columns.keys())
++    assert AutorelevoContratoRenta.__tablename__ == "autorelevo_contrato_renta"
++    assert {"contract_number", "numero_reserva", "siniestro_folio",
++            "dias_renta", "total_contrato", "voucher_total",
++            "audit_created_by", "active_record"} <= columnas
+diff --git a/apiserver/requirements.txt b/apiserver/requirements.txt
+index 7cd0fc98..71ff1ddf 100644
+--- a/apiserver/requirements.txt
++++ b/apiserver/requirements.txt
+@@ -5,6 +5,7 @@ certifi==2026.6.17
+ cffi==2.1.0
+ charset-normalizer==3.4.9
+ click==8.4.2
++defusedxml==0.7.1
+ et_xmlfile==2.0.0
+ Flask==3.1.3
+ Flask-Cors==6.0.5
+-- 
+2.56.0
+
+
+From d974aac88a83523a36df31dd88ee57d5b30cc443 Mon Sep 17 00:00:00 2001
+From: JoshMorinDev <joshua.morinsalazar@chubb.com>
+Date: Mon, 26 Oct 2026 17:46:51 -0600
+Subject: [PATCH 02/12] feat(importador): parser seguro de xlsx y csv
+
+---
+ apiserver/ix/apps/importador/__init__.py      |  0
+ apiserver/ix/apps/importador/definitions.py   | 17 ++++
+ apiserver/ix/apps/importador/errors.py        | 25 ++++++
+ apiserver/ix/apps/importador/parsers.py       | 82 +++++++++++++++++++
+ apiserver/ix/tests/importador/conftest.py     | 28 +++++++
+ apiserver/ix/tests/importador/test_parsers.py | 54 ++++++++++++
+ 6 files changed, 206 insertions(+)
+ create mode 100644 apiserver/ix/apps/importador/__init__.py
+ create mode 100644 apiserver/ix/apps/importador/definitions.py
+ create mode 100644 apiserver/ix/apps/importador/errors.py
+ create mode 100644 apiserver/ix/apps/importador/parsers.py
+ create mode 100644 apiserver/ix/tests/importador/conftest.py
+ create mode 100644 apiserver/ix/tests/importador/test_parsers.py
+
+diff --git a/apiserver/ix/apps/importador/__init__.py b/apiserver/ix/apps/importador/__init__.py
+new file mode 100644
+index 00000000..e69de29b
+diff --git a/apiserver/ix/apps/importador/definitions.py b/apiserver/ix/apps/importador/definitions.py
+new file mode 100644
+index 00000000..9cac3099
+--- /dev/null
++++ b/apiserver/ix/apps/importador/definitions.py
+@@ -0,0 +1,17 @@
++API_URI_BASE = "/importador"
++LOG_PREFIX = "IMPORTADOR -"
++TAMANO_LOTE = 500
++MAX_ERRORES_RESPUESTA = 100
++MAX_BYTES_DESCOMPRIMIDOS = 50 * 1024 * 1024
++FIRMA_ZIP = b"PK\x03\x04"
++PREFIJOS_FORMULA = ("=", "+", "-", "@")
++
++MSG_SIN_ARCHIVO = "Debe proporcionar un archivo en el campo 'file'"
++MSG_LAYOUT_INEXISTENTE = "Layout de importación no encontrado"
++MSG_FORMATO = "El archivo debe ser .xlsx o .csv válido"
++MSG_TAMANO = "El archivo excede el tamaño permitido"
++MSG_FILAS = "El archivo excede el número de filas permitido"
++MSG_DESCOMPRESION = "El archivo excede el tamaño descomprimido permitido"
++MSG_COLUMNAS = "Faltan columnas obligatorias"
++MSG_FILAS_INVALIDAS = "El archivo tiene filas inválidas; no se importó nada"
++MSG_ERROR_INTERNO = "No se pudo completar la importación"
+diff --git a/apiserver/ix/apps/importador/errors.py b/apiserver/ix/apps/importador/errors.py
+new file mode 100644
+index 00000000..c6e6df30
+--- /dev/null
++++ b/apiserver/ix/apps/importador/errors.py
+@@ -0,0 +1,25 @@
++from dataclasses import dataclass, asdict
++from typing import Any
++
++
++class ImportError_(Exception):
++    """Error de importación con estatus HTTP y detalle por fila opcional."""
++
++    def __init__(self, mensaje: str, status: int = 400, errores: list | None = None):
++        super().__init__(mensaje)
++        self.mensaje = mensaje
++        self.status = status
++        self.errores = errores or []
++
++
++@dataclass(frozen=True)
++class RowError:
++    fila: int
++    columna: str
++    valor: Any
++    mensaje: str
++
++    def to_dict(self) -> dict:
++        datos = asdict(self)
++        datos["valor"] = None if self.valor is None else str(self.valor)
++        return datos
+diff --git a/apiserver/ix/apps/importador/parsers.py b/apiserver/ix/apps/importador/parsers.py
+new file mode 100644
+index 00000000..4da19a3a
+--- /dev/null
++++ b/apiserver/ix/apps/importador/parsers.py
+@@ -0,0 +1,82 @@
++import csv
++import io
++import unicodedata
++import zipfile
++from typing import Iterator
++
++import openpyxl
++
++from ix.apps.importador.definitions import (
++    FIRMA_ZIP, MAX_BYTES_DESCOMPRIMIDOS,
++    MSG_DESCOMPRESION, MSG_FILAS, MSG_FORMATO,
++)
++from ix.apps.importador.errors import ImportError_
++
++Filas = Iterator[tuple[int, list]]
++
++
++def normalizar_encabezado(valor) -> str:
++    texto = str(valor or "").replace("\xad", "")
++    texto = unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode()
++    return " ".join(texto.split()).lower()
++
++
++def _es_vacia(valores: list) -> bool:
++    return all(v is None or str(v).strip() == "" for v in valores)
++
++
++def _limitar(filas: Filas, max_rows: int) -> Filas:
++    for contador, fila in enumerate(filas, start=1):
++        if contador > max_rows:
++            raise ImportError_(MSG_FILAS)
++        yield fila
++
++
++def _validar_zip(data: bytes) -> None:
++    if not data.startswith(FIRMA_ZIP):
++        raise ImportError_(MSG_FORMATO)
++    try:
++        with zipfile.ZipFile(io.BytesIO(data)) as z:
++            total = sum(info.file_size for info in z.infolist())
++    except zipfile.BadZipFile:
++        raise ImportError_(MSG_FORMATO)
++    if total > MAX_BYTES_DESCOMPRIMIDOS:
++        raise ImportError_(MSG_DESCOMPRESION)
++
++
++def _leer_xlsx(data: bytes) -> tuple[list, Filas]:
++    _validar_zip(data)
++    try:
++        hoja = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True).worksheets[0]
++        filas = hoja.iter_rows(values_only=True)
++        encabezados = list(next(filas, []))
++    except (KeyError, ValueError, OSError, zipfile.BadZipFile):
++        raise ImportError_(MSG_FORMATO)
++    return encabezados, ((n, list(v)) for n, v in enumerate(filas, start=2))
++
++
++def _leer_csv(data: bytes) -> tuple[list, Filas]:
++    try:
++        texto = data.decode("utf-8-sig")
++    except UnicodeDecodeError:
++        raise ImportError_(MSG_FORMATO)
++    lector = csv.reader(io.StringIO(texto))
++    encabezados = next(lector, [])
++    return encabezados, ((n, list(v)) for n, v in enumerate(lector, start=2))
++
++
++LECTORES = {".xlsx": _leer_xlsx, ".csv": _leer_csv}
++
++
++def leer_archivo(filename: str, data: bytes, max_rows: int) -> tuple[list[str], Filas]:
++    """Devuelve encabezados normalizados y un iterador perezoso de filas no vacías.
++
++    El límite de filas se aplica al consumir el iterador.
++    """
++    extension = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
++    lector = LECTORES.get(extension)
++    if not lector:
++        raise ImportError_(MSG_FORMATO)
++    encabezados, filas = lector(data)
++    no_vacias = (f for f in filas if not _es_vacia(f[1]))
++    return [normalizar_encabezado(h) for h in encabezados], _limitar(no_vacias, max_rows)
+diff --git a/apiserver/ix/tests/importador/conftest.py b/apiserver/ix/tests/importador/conftest.py
+new file mode 100644
+index 00000000..53eb5a6e
+--- /dev/null
++++ b/apiserver/ix/tests/importador/conftest.py
+@@ -0,0 +1,28 @@
++import io
++import zipfile
++
++import openpyxl
++import pytest
++
++
++def _xlsx(filas):
++    wb = openpyxl.Workbook()
++    ws = wb.active
++    for fila in filas:
++        ws.append(fila)
++    buffer = io.BytesIO()
++    wb.save(buffer)
++    return buffer.getvalue()
++
++
++@pytest.fixture
++def xlsx_bytes():
++    return _xlsx
++
++
++@pytest.fixture
++def zip_bomb():
++    buffer = io.BytesIO()
++    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as z:
++        z.writestr("xl/worksheets/sheet1.xml", b"0" * (60 * 1024 * 1024))
++    return buffer.getvalue()
+diff --git a/apiserver/ix/tests/importador/test_parsers.py b/apiserver/ix/tests/importador/test_parsers.py
+new file mode 100644
+index 00000000..3c55595d
+--- /dev/null
++++ b/apiserver/ix/tests/importador/test_parsers.py
+@@ -0,0 +1,54 @@
++import pytest
++
++from ix.apps.importador.errors import ImportError_
++from ix.apps.importador.parsers import leer_archivo, normalizar_encabezado
++
++
++@pytest.mark.parametrize("crudo, esperado", [
++    ("Di\xadas Renta", "dias renta"),
++    ("  Número de  Siniestro o Folio ", "numero de siniestro o folio"),
++    (None, ""),
++])
++def test_normalizar_encabezado(crudo, esperado):
++    assert normalizar_encabezado(crudo) == esperado
++
++
++def test_lee_xlsx(xlsx_bytes):
++    data = xlsx_bytes([["Contract Number", "Di\xadas Renta"], ["F1", 15], [None, None]])
++    encabezados, filas = leer_archivo("r.xlsx", data, max_rows=10)
++    assert encabezados == ["contract number", "dias renta"]
++    assert list(filas) == [(2, ["F1", 15])]
++
++
++def test_lee_csv_utf8():
++    data = "Contract Number,Días Renta\nF1,15\n".encode()
++    encabezados, filas = leer_archivo("r.csv", data, max_rows=10)
++    assert encabezados == ["contract number", "dias renta"]
++    assert list(filas) == [(2, ["F1", "15"])]
++
++
++def test_rechaza_extension_no_permitida():
++    with pytest.raises(ImportError_):
++        leer_archivo("r.xls", b"x", max_rows=10)
++
++
++def test_rechaza_xlsx_falso():
++    with pytest.raises(ImportError_):
++        leer_archivo("r.xlsx", b"no soy zip", max_rows=10)
++
++
++def test_rechaza_csv_no_utf8():
++    with pytest.raises(ImportError_):
++        leer_archivo("r.csv", b"\xff\xfe\x00a", max_rows=10)
++
++
++def test_rechaza_zip_bomb(zip_bomb):
++    with pytest.raises(ImportError_):
++        leer_archivo("r.xlsx", zip_bomb, max_rows=10)
++
++
++def test_rechaza_exceso_de_filas(xlsx_bytes):
++    data = xlsx_bytes([["A"], ["1"], ["2"], ["3"]])
++    _, filas = leer_archivo("r.xlsx", data, max_rows=2)
++    with pytest.raises(ImportError_):
++        list(filas)
+-- 
+2.56.0
+
+
+From 03d523b87c1a92e7b29668f842275b6777d71302 Mon Sep 17 00:00:00 2001
+From: JoshMorinDev <joshua.morinsalazar@chubb.com>
+Date: Mon, 26 Oct 2026 17:48:48 -0600
+Subject: [PATCH 03/12] fix(importador): errores de formato siempre como
+ ImportError_
+
+---
+ apiserver/ix/apps/importador/parsers.py       | 36 +++++++++++++-----
+ apiserver/ix/tests/importador/test_parsers.py | 38 +++++++++++++++++++
+ 2 files changed, 65 insertions(+), 9 deletions(-)
+
+diff --git a/apiserver/ix/apps/importador/parsers.py b/apiserver/ix/apps/importador/parsers.py
+index 4da19a3a..74d1f762 100644
+--- a/apiserver/ix/apps/importador/parsers.py
++++ b/apiserver/ix/apps/importador/parsers.py
+@@ -1,5 +1,6 @@
+ import csv
+ import io
++import logging
+ import unicodedata
+ import zipfile
+ from typing import Iterator
+@@ -7,7 +8,7 @@ from typing import Iterator
+ import openpyxl
+ 
+ from ix.apps.importador.definitions import (
+-    FIRMA_ZIP, MAX_BYTES_DESCOMPRIMIDOS,
++    FIRMA_ZIP, LOG_PREFIX, MAX_BYTES_DESCOMPRIMIDOS,
+     MSG_DESCOMPRESION, MSG_FILAS, MSG_FORMATO,
+ )
+ from ix.apps.importador.errors import ImportError_
+@@ -25,6 +26,20 @@ def _es_vacia(valores: list) -> bool:
+     return all(v is None or str(v).strip() == "" for v in valores)
+ 
+ 
++def _error_formato(exc: Exception) -> ImportError_:
++    logging.warning(f"{LOG_PREFIX} archivo con formato inválido ({type(exc).__name__})")
++    return ImportError_(MSG_FORMATO)
++
++
++def _proteger(filas: Filas) -> Filas:
++    try:
++        yield from filas
++    except ImportError_:
++        raise
++    except Exception as exc:
++        raise _error_formato(exc)
++
++
+ def _limitar(filas: Filas, max_rows: int) -> Filas:
+     for contador, fila in enumerate(filas, start=1):
+         if contador > max_rows:
+@@ -46,12 +61,9 @@ def _validar_zip(data: bytes) -> None:
+ 
+ def _leer_xlsx(data: bytes) -> tuple[list, Filas]:
+     _validar_zip(data)
+-    try:
+-        hoja = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True).worksheets[0]
+-        filas = hoja.iter_rows(values_only=True)
+-        encabezados = list(next(filas, []))
+-    except (KeyError, ValueError, OSError, zipfile.BadZipFile):
+-        raise ImportError_(MSG_FORMATO)
++    hoja = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True).worksheets[0]
++    filas = hoja.iter_rows(values_only=True)
++    encabezados = list(next(filas, []))
+     return encabezados, ((n, list(v)) for n, v in enumerate(filas, start=2))
+ 
+ 
+@@ -71,12 +83,18 @@ LECTORES = {".xlsx": _leer_xlsx, ".csv": _leer_csv}
+ def leer_archivo(filename: str, data: bytes, max_rows: int) -> tuple[list[str], Filas]:
+     """Devuelve encabezados normalizados y un iterador perezoso de filas no vacías.
+ 
++    Cualquier fallo de formato, en la carga o al consumir el iterador, sale como ImportError_.
+     El límite de filas se aplica al consumir el iterador.
+     """
+     extension = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+     lector = LECTORES.get(extension)
+     if not lector:
+         raise ImportError_(MSG_FORMATO)
+-    encabezados, filas = lector(data)
+-    no_vacias = (f for f in filas if not _es_vacia(f[1]))
++    try:
++        encabezados, filas = lector(data)
++    except ImportError_:
++        raise
++    except Exception as exc:
++        raise _error_formato(exc)
++    no_vacias = (f for f in _proteger(filas) if not _es_vacia(f[1]))
+     return [normalizar_encabezado(h) for h in encabezados], _limitar(no_vacias, max_rows)
+diff --git a/apiserver/ix/tests/importador/test_parsers.py b/apiserver/ix/tests/importador/test_parsers.py
+index 3c55595d..ef8e5ced 100644
+--- a/apiserver/ix/tests/importador/test_parsers.py
++++ b/apiserver/ix/tests/importador/test_parsers.py
+@@ -1,3 +1,6 @@
++import io
++import zipfile
++
+ import pytest
+ 
+ from ix.apps.importador.errors import ImportError_
+@@ -52,3 +55,38 @@ def test_rechaza_exceso_de_filas(xlsx_bytes):
+     _, filas = leer_archivo("r.xlsx", data, max_rows=2)
+     with pytest.raises(ImportError_):
+         list(filas)
++
++
++def test_rechaza_zip_truncado_con_firma(xlsx_bytes):
++    data = xlsx_bytes([["A"], ["1"]])
++    with pytest.raises(ImportError_):
++        leer_archivo("r.xlsx", data[: len(data) // 2], max_rows=10)
++
++
++def test_rechaza_zip_valido_que_no_es_xlsx():
++    buffer = io.BytesIO()
++    with zipfile.ZipFile(buffer, "w") as z:
++        z.writestr("texto.txt", "hola")
++    with pytest.raises(ImportError_):
++        leer_archivo("r.xlsx", buffer.getvalue(), max_rows=10)
++
++
++def test_rechaza_hoja_xml_corrupta_al_consumir(xlsx_bytes):
++    original = xlsx_bytes([["A"], ["1"]])
++    buffer = io.BytesIO()
++    with zipfile.ZipFile(io.BytesIO(original)) as origen, zipfile.ZipFile(buffer, "w") as destino:
++        for info in origen.infolist():
++            contenido = origen.read(info.filename)
++            if info.filename == "xl/worksheets/sheet1.xml":
++                contenido = b"<worksheet><sheetData><row r='1'"
++            destino.writestr(info.filename, contenido)
++    with pytest.raises(ImportError_):
++        _, filas = leer_archivo("r.xlsx", buffer.getvalue(), max_rows=10)
++        list(filas)
++
++
++def test_rechaza_campo_csv_mayor_al_limite_al_consumir():
++    data = ("A\n" + "x" * 140000 + "\n").encode()
++    with pytest.raises(ImportError_):
++        _, filas = leer_archivo("r.csv", data, max_rows=10)
++        list(filas)
+-- 
+2.56.0
+
+
+From ff2444064fa323a19ee94f46381432cbde761a2c Mon Sep 17 00:00:00 2001
+From: JoshMorinDev <joshua.morinsalazar@chubb.com>
+Date: Mon, 26 Oct 2026 17:50:15 -0600
+Subject: [PATCH 04/12] =?UTF-8?q?feat(importador):=20validaci=C3=B3n=20por?=
+ =?UTF-8?q?=20tipo=20de=20columna?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ apiserver/ix/apps/importador/layouts.py       | 22 +++++
+ apiserver/ix/apps/importador/validators.py    | 89 +++++++++++++++++++
+ .../ix/tests/importador/test_validators.py    | 61 +++++++++++++
+ 3 files changed, 172 insertions(+)
+ create mode 100644 apiserver/ix/apps/importador/layouts.py
+ create mode 100644 apiserver/ix/apps/importador/validators.py
+ create mode 100644 apiserver/ix/tests/importador/test_validators.py
+
+diff --git a/apiserver/ix/apps/importador/layouts.py b/apiserver/ix/apps/importador/layouts.py
+new file mode 100644
+index 00000000..b170c028
+--- /dev/null
++++ b/apiserver/ix/apps/importador/layouts.py
+@@ -0,0 +1,22 @@
++from dataclasses import dataclass
++
++
++@dataclass(frozen=True)
++class ImportColumn:
++    header: str
++    field: str
++    kind: str
++    required: bool = False
++
++
++@dataclass(frozen=True)
++class ImportLayout:
++    """Define cómo un archivo se convierte en filas de una tabla."""
++
++    key: str
++    model: type
++    upsert_key: str
++    columns: tuple
++    roles: tuple
++    max_bytes: int
++    max_rows: int
+diff --git a/apiserver/ix/apps/importador/validators.py b/apiserver/ix/apps/importador/validators.py
+new file mode 100644
+index 00000000..5a3348d5
+--- /dev/null
++++ b/apiserver/ix/apps/importador/validators.py
+@@ -0,0 +1,89 @@
++from datetime import date, datetime
++from decimal import Decimal, InvalidOperation
++
++from ix.apps.importador.definitions import MAX_ERRORES_RESPUESTA, MSG_COLUMNAS, PREFIJOS_FORMULA
++from ix.apps.importador.errors import ImportError_, RowError
++from ix.apps.importador.parsers import normalizar_encabezado
++
++
++def _texto(valor):
++    texto = str(valor).strip()
++    if texto.startswith(PREFIJOS_FORMULA):
++        raise ValueError("No se permiten fórmulas")
++    return texto
++
++
++def _decimal(valor):
++    try:
++        return Decimal(str(valor).replace(",", "").strip()).quantize(Decimal("0.01"))
++    except InvalidOperation:
++        raise ValueError("Número inválido")
++
++
++def _entero(valor):
++    numero = _decimal(valor)
++    if numero != numero.to_integral_value():
++        raise ValueError("Entero inválido")
++    return int(numero)
++
++
++def _fecha(valor):
++    if isinstance(valor, datetime):
++        return valor.date()
++    if isinstance(valor, date):
++        return valor
++    try:
++        return date.fromisoformat(str(valor).strip()[:10])
++    except ValueError:
++        raise ValueError("Fecha inválida (AAAA-MM-DD)")
++
++
++CONVERSORES = {"text": _texto, "decimal": _decimal, "int": _entero, "date": _fecha}
++
++
++def mapear_columnas(layout, encabezados: list[str]) -> dict[str, int]:
++    indices = {}
++    for columna in layout.columns:
++        objetivo = normalizar_encabezado(columna.header)
++        if objetivo in encabezados:
++            indices[columna.field] = encabezados.index(objetivo)
++    faltantes = [c.header for c in layout.columns if c.required and c.field not in indices]
++    if faltantes:
++        raise ImportError_(MSG_COLUMNAS, errores=faltantes)
++    return indices
++
++
++def _convertir_fila(layout, indices, numero, valores):
++    registro, errores = {}, []
++    for columna in layout.columns:
++        if columna.field not in indices:
++            continue
++        indice = indices[columna.field]
++        crudo = valores[indice] if indice < len(valores) else None
++        if crudo is None or str(crudo).strip() == "":
++            if columna.required:
++                errores.append(RowError(numero, columna.header, crudo, "Valor obligatorio"))
++            registro[columna.field] = None
++            continue
++        try:
++            registro[columna.field] = CONVERSORES[columna.kind](crudo)
++        except ValueError as e:
++            errores.append(RowError(numero, columna.header, crudo, str(e)))
++    return registro, errores
++
++
++def validar_filas(layout, indices, filas):
++    """Convierte todas las filas; devuelve registros, hasta 100 errores y el total de errores."""
++    registros, errores, total, vistas = [], [], 0, set()
++    encabezado_llave = next(c.header for c in layout.columns if c.field == layout.upsert_key)
++    for numero, valores in filas:
++        registro, errores_fila = _convertir_fila(layout, indices, numero, valores)
++        llave = registro.get(layout.upsert_key)
++        if not errores_fila and llave in vistas:
++            errores_fila.append(RowError(numero, encabezado_llave, llave, "Llave duplicada en el archivo"))
++        vistas.add(llave)
++        total += len(errores_fila)
++        errores.extend(errores_fila[:max(0, MAX_ERRORES_RESPUESTA - len(errores))])
++        if not errores_fila:
++            registros.append(registro)
++    return registros, errores, total
+diff --git a/apiserver/ix/tests/importador/test_validators.py b/apiserver/ix/tests/importador/test_validators.py
+new file mode 100644
+index 00000000..8df83d1c
+--- /dev/null
++++ b/apiserver/ix/tests/importador/test_validators.py
+@@ -0,0 +1,61 @@
++from datetime import date
++from decimal import Decimal
++
++import pytest
++
++from ix.apps.importador.errors import ImportError_
++from ix.apps.importador.layouts import ImportColumn, ImportLayout
++from ix.apps.importador.validators import mapear_columnas, validar_filas
++
++LAYOUT = ImportLayout(
++    key="prueba", model=None, upsert_key="clave",
++    columns=(
++        ImportColumn("Clave", "clave", "text", required=True),
++        ImportColumn("Monto", "monto", "decimal", required=True),
++        ImportColumn("Dias", "dias", "int"),
++        ImportColumn("Fecha", "fecha", "date"),
++    ),
++    roles=("admin",), max_bytes=1024, max_rows=100,
++)
++
++
++def test_mapear_usa_primera_aparicion_e_ignora_extras():
++    indices = mapear_columnas(LAYOUT, ["clave", "extra", "monto", "clave"])
++    assert indices == {"clave": 0, "monto": 2}
++
++
++def test_mapear_reporta_obligatorias_faltantes():
++    with pytest.raises(ImportError_) as e:
++        mapear_columnas(LAYOUT, ["clave"])
++    assert e.value.errores == ["Monto"]
++
++
++def test_convierte_tipos():
++    indices = {"clave": 0, "monto": 1, "dias": 2, "fecha": 3}
++    registros, errores, total = validar_filas(
++        LAYOUT, indices, [(2, [" F1 ", "1,078.5", "15", "2025-04-03"])])
++    assert errores == [] and total == 0
++    assert registros == [{"clave": "F1", "monto": Decimal("1078.50"),
++                          "dias": 15, "fecha": date(2025, 4, 3)}]
++
++
++@pytest.mark.parametrize("fila, columna", [
++    ([None, "1"], "Clave"),
++    (["F1", "abc"], "Monto"),
++    (["=HYPERLINK(1)", "1"], "Clave"),
++])
++def test_errores_de_fila(fila, columna):
++    _, errores, total = validar_filas(LAYOUT, {"clave": 0, "monto": 1}, [(5, fila)])
++    assert total == 1 and errores[0].fila == 5 and errores[0].columna == columna
++
++
++def test_llave_duplicada_en_archivo():
++    _, errores, _ = validar_filas(LAYOUT, {"clave": 0, "monto": 1},
++                                  [(2, ["F1", "1"]), (3, ["F1", "2"])])
++    assert [(e.fila, e.columna) for e in errores] == [(3, "Clave")]
++
++
++def test_limita_errores_devueltos_pero_cuenta_todos():
++    filas = [(n, [None, "1"]) for n in range(2, 202)]
++    _, errores, total = validar_filas(LAYOUT, {"clave": 0, "monto": 1}, filas)
++    assert len(errores) == 100 and total == 200
+-- 
+2.56.0
+
+
+From 1afe39a72b16673e8e18c3d6e46a729141bf21c6 Mon Sep 17 00:00:00 2001
+From: JoshMorinDev <joshua.morinsalazar@chubb.com>
+Date: Mon, 26 Oct 2026 17:52:33 -0600
+Subject: [PATCH 05/12] fix(importador): tipos estrictos y llaves duplicadas
+
+---
+ apiserver/ix/apps/importador/validators.py    | 45 +++++++---
+ .../ix/tests/importador/test_validators.py    | 85 ++++++++++++++++++-
+ 2 files changed, 119 insertions(+), 11 deletions(-)
+
+diff --git a/apiserver/ix/apps/importador/validators.py b/apiserver/ix/apps/importador/validators.py
+index 5a3348d5..b0da8526 100644
+--- a/apiserver/ix/apps/importador/validators.py
++++ b/apiserver/ix/apps/importador/validators.py
+@@ -5,6 +5,9 @@ from ix.apps.importador.definitions import MAX_ERRORES_RESPUESTA, MSG_COLUMNAS,
+ from ix.apps.importador.errors import ImportError_, RowError
+ from ix.apps.importador.parsers import normalizar_encabezado
+ 
++MSG_NUMERO = "Número inválido"
++MSG_FECHA = "Fecha inválida (AAAA-MM-DD)"
++
+ 
+ def _texto(valor):
+     texto = str(valor).strip()
+@@ -13,15 +16,25 @@ def _texto(valor):
+     return texto
+ 
+ 
++def _numero(valor) -> Decimal:
++    try:
++        numero = Decimal(str(valor).replace(",", "").strip())
++    except InvalidOperation:
++        raise ValueError(MSG_NUMERO)
++    if not numero.is_finite():
++        raise ValueError(MSG_NUMERO)
++    return numero
++
++
+ def _decimal(valor):
+     try:
+-        return Decimal(str(valor).replace(",", "").strip()).quantize(Decimal("0.01"))
++        return _numero(valor).quantize(Decimal("0.01"))
+     except InvalidOperation:
+-        raise ValueError("Número inválido")
++        raise ValueError(MSG_NUMERO)
+ 
+ 
+ def _entero(valor):
+-    numero = _decimal(valor)
++    numero = _numero(valor)
+     if numero != numero.to_integral_value():
+         raise ValueError("Entero inválido")
+     return int(numero)
+@@ -32,10 +45,15 @@ def _fecha(valor):
+         return valor.date()
+     if isinstance(valor, date):
+         return valor
++    texto = str(valor).strip()
++    if len(texto) > 10 and texto[10] not in " T":
++        raise ValueError(MSG_FECHA)
+     try:
+-        return date.fromisoformat(str(valor).strip()[:10])
++        if len(texto) > 10:
++            return datetime.fromisoformat(texto).date()
++        return date.fromisoformat(texto)
+     except ValueError:
+-        raise ValueError("Fecha inválida (AAAA-MM-DD)")
++        raise ValueError(MSG_FECHA)
+ 
+ 
+ CONVERSORES = {"text": _texto, "decimal": _decimal, "int": _entero, "date": _fecha}
+@@ -73,15 +91,22 @@ def _convertir_fila(layout, indices, numero, valores):
+ 
+ 
+ def validar_filas(layout, indices, filas):
+-    """Convierte todas las filas; devuelve registros, hasta 100 errores y el total de errores."""
++    """Convierte todas las filas; devuelve registros, hasta 100 errores y el total de errores.
++
++    Las llaves se comparan sin distinguir mayúsculas y las vacías no cuentan como duplicadas.
++    """
++    encabezado_llave = next((c.header for c in layout.columns if c.field == layout.upsert_key), None)
++    if encabezado_llave is None:
++        raise ValueError(f"upsert_key '{layout.upsert_key}' no está en las columnas del layout")
+     registros, errores, total, vistas = [], [], 0, set()
+-    encabezado_llave = next(c.header for c in layout.columns if c.field == layout.upsert_key)
+     for numero, valores in filas:
+         registro, errores_fila = _convertir_fila(layout, indices, numero, valores)
+         llave = registro.get(layout.upsert_key)
+-        if not errores_fila and llave in vistas:
+-            errores_fila.append(RowError(numero, encabezado_llave, llave, "Llave duplicada en el archivo"))
+-        vistas.add(llave)
++        if llave is not None:
++            clave = str(llave).casefold()
++            if not errores_fila and clave in vistas:
++                errores_fila.append(RowError(numero, encabezado_llave, llave, "Llave duplicada en el archivo"))
++            vistas.add(clave)
+         total += len(errores_fila)
+         errores.extend(errores_fila[:max(0, MAX_ERRORES_RESPUESTA - len(errores))])
+         if not errores_fila:
+diff --git a/apiserver/ix/tests/importador/test_validators.py b/apiserver/ix/tests/importador/test_validators.py
+index 8df83d1c..518261e2 100644
+--- a/apiserver/ix/tests/importador/test_validators.py
++++ b/apiserver/ix/tests/importador/test_validators.py
+@@ -1,4 +1,5 @@
+-from datetime import date
++import dataclasses
++from datetime import date, datetime
+ from decimal import Decimal
+ 
+ import pytest
+@@ -18,6 +19,25 @@ LAYOUT = ImportLayout(
+     roles=("admin",), max_bytes=1024, max_rows=100,
+ )
+ 
++LAYOUT_LLAVE_OPCIONAL = ImportLayout(
++    key="prueba", model=None, upsert_key="clave",
++    columns=(
++        ImportColumn("Clave", "clave", "text"),
++        ImportColumn("Monto", "monto", "decimal", required=True),
++    ),
++    roles=("admin",), max_bytes=1024, max_rows=100,
++)
++
++INDICES = {"clave": 0, "monto": 1, "dias": 2, "fecha": 3}
++
++
++def _fila_dias(valor):
++    return validar_filas(LAYOUT, INDICES, [(2, ["F1", "1", valor, None])])
++
++
++def _fila_fecha(valor):
++    return validar_filas(LAYOUT, INDICES, [(2, ["F1", "1", None, valor])])
++
+ 
+ def test_mapear_usa_primera_aparicion_e_ignora_extras():
+     indices = mapear_columnas(LAYOUT, ["clave", "extra", "monto", "clave"])
+@@ -59,3 +79,66 @@ def test_limita_errores_devueltos_pero_cuenta_todos():
+     filas = [(n, [None, "1"]) for n in range(2, 202)]
+     _, errores, total = validar_filas(LAYOUT, {"clave": 0, "monto": 1}, filas)
+     assert len(errores) == 100 and total == 200
++
++
++@pytest.mark.parametrize("valor", ["15", "15.00", 15])
++def test_entero_acepta_enteros(valor):
++    registros, errores, total = _fila_dias(valor)
++    assert errores == [] and total == 0 and registros[0]["dias"] == 15
++
++
++@pytest.mark.parametrize("valor", ["15.004", "15.5", "NaN"])
++def test_entero_rechaza_no_enteros(valor):
++    _, errores, total = _fila_dias(valor)
++    assert total == 1 and errores[0].columna == "Dias"
++
++
++@pytest.mark.parametrize("valor", ["2025-04-03", "2025-04-03 10:00:00",
++                                   "2025-04-03T10:00:00",
++                                   datetime(2025, 4, 3, 10, 0), date(2025, 4, 3)])
++def test_fecha_acepta_formatos(valor):
++    registros, errores, total = _fila_fecha(valor)
++    assert errores == [] and total == 0 and registros[0]["fecha"] == date(2025, 4, 3)
++
++
++@pytest.mark.parametrize("valor", ["2025-04-03garbage", "2025-13-01",
++                                   "2025-04-03X10:00:00", "2025-4-3", "03/04/2025"])
++def test_fecha_rechaza_invalidas(valor):
++    _, errores, total = _fila_fecha(valor)
++    assert total == 1 and errores[0].columna == "Fecha"
++
++
++@pytest.mark.parametrize("valor", ["NaN", "Infinity", "-inf", "sNaN"])
++def test_decimal_rechaza_no_finitos(valor):
++    _, errores, total = validar_filas(LAYOUT, INDICES, [(2, ["F1", valor])])
++    assert total == 1 and errores[0].columna == "Monto"
++
++
++@pytest.mark.parametrize("clave", ["+1", "-1", "@x", "=x"])
++def test_texto_rechaza_prefijos_de_formula(clave):
++    _, errores, total = validar_filas(LAYOUT, INDICES, [(2, [clave, "1"])])
++    assert total == 1 and errores[0].columna == "Clave"
++
++
++def test_fila_corta_marca_obligatoria_faltante():
++    _, errores, total = validar_filas(LAYOUT, {"clave": 0, "monto": 1}, [(4, ["F1"])])
++    assert total == 1 and errores[0].columna == "Monto"
++    assert errores[0].mensaje == "Valor obligatorio"
++
++
++def test_llave_opcional_vacia_no_es_duplicada():
++    _, errores, total = validar_filas(LAYOUT_LLAVE_OPCIONAL, {"clave": 0, "monto": 1},
++                                      [(2, [None, "1"]), (3, ["", "2"])])
++    assert errores == [] and total == 0
++
++
++def test_llave_duplicada_ignora_mayusculas():
++    _, errores, _ = validar_filas(LAYOUT, {"clave": 0, "monto": 1},
++                                  [(2, ["F1", "1"]), (3, ["f1", "2"])])
++    assert [(e.fila, e.columna) for e in errores] == [(3, "Clave")]
++
++
++def test_upsert_key_fuera_de_columnas_falla_claro():
++    layout = dataclasses.replace(LAYOUT, upsert_key="inexistente")
++    with pytest.raises(ValueError, match="inexistente"):
++        validar_filas(layout, {"clave": 0, "monto": 1}, [(2, ["F1", "1"])])
+-- 
+2.56.0
+
+
+From 5e7d967a764114880b5d5295480b503212073ad7 Mon Sep 17 00:00:00 2001
+From: JoshMorinDev <joshua.morinsalazar@chubb.com>
+Date: Mon, 26 Oct 2026 17:54:01 -0600
+Subject: [PATCH 06/12] feat(importador): layout AVASA contratos cerrados
+
+---
+ apiserver/ix/apps/importador/layouts.py       | 50 ++++++++++++++++
+ apiserver/ix/tests/importador/test_layouts.py | 60 +++++++++++++++++++
+ 2 files changed, 110 insertions(+)
+ create mode 100644 apiserver/ix/tests/importador/test_layouts.py
+
+diff --git a/apiserver/ix/apps/importador/layouts.py b/apiserver/ix/apps/importador/layouts.py
+index b170c028..8265cbaf 100644
+--- a/apiserver/ix/apps/importador/layouts.py
++++ b/apiserver/ix/apps/importador/layouts.py
+@@ -1,5 +1,11 @@
+ from dataclasses import dataclass
+ 
++from ix.apps.importador.validators import CONVERSORES
++from ix.boletas_informativas.auto_relevo.api.auto_relevo_boleta.auto_relevo_boleta_models import (
++    AutorelevoContratoRenta,
++)
++from ix.config import config
++
+ 
+ @dataclass(frozen=True)
+ class ImportColumn:
+@@ -20,3 +26,47 @@ class ImportLayout:
+     roles: tuple
+     max_bytes: int
+     max_rows: int
++
++
++AVASA_CONTRATOS = ImportLayout(
++    key="avasa_contratos",
++    model=AutorelevoContratoRenta,
++    upsert_key="contract_number",
++    columns=(
++        ImportColumn("Contract Number", "contract_number", "text", required=True),
++        ImportColumn("Numero de Reserva", "numero_reserva", "text"),
++        ImportColumn("Número de Siniestro o Folio", "siniestro_folio", "text"),
++        ImportColumn("Días Renta", "dias_renta", "decimal", required=True),
++        ImportColumn("Total del contrato", "total_contrato", "decimal", required=True),
++        ImportColumn("Voucher Total", "voucher_total", "decimal", required=True),
++    ),
++    roles=(config.ADMIN, config.SUPERVISOR),
++    max_bytes=5 * 1024 * 1024,
++    max_rows=20_000,
++)
++
++
++def _registrar(*layouts: ImportLayout) -> dict:
++    registro = {}
++    for layout in layouts:
++        for columna in layout.columns:
++            if columna.kind not in CONVERSORES:
++                raise ValueError(
++                    f"Layout '{layout.key}': tipo '{columna.kind}' de la columna "
++                    f"'{columna.field}' no existe en CONVERSORES"
++                )
++        llaves_obligatorias = {c.field for c in layout.columns if c.required}
++        if layout.upsert_key not in llaves_obligatorias:
++            raise ValueError(
++                f"Layout '{layout.key}': upsert_key '{layout.upsert_key}' debe ser una "
++                f"columna obligatoria"
++            )
++        registro[layout.key] = layout
++    return registro
++
++
++LAYOUTS = _registrar(AVASA_CONTRATOS)
++
++
++def obtener_layout(key: str):
++    return LAYOUTS.get(key)
+diff --git a/apiserver/ix/tests/importador/test_layouts.py b/apiserver/ix/tests/importador/test_layouts.py
+new file mode 100644
+index 00000000..bd8fd409
+--- /dev/null
++++ b/apiserver/ix/tests/importador/test_layouts.py
+@@ -0,0 +1,60 @@
++import pytest
++
++from ix.apps.importador.layouts import (
++    LAYOUTS,
++    ImportColumn,
++    ImportLayout,
++    _registrar,
++    obtener_layout,
++)
++from ix.apps.importador.parsers import normalizar_encabezado
++from ix.apps.importador.validators import mapear_columnas
++
++ENCABEZADOS_AVASA = ["Contract Number", "Número de Siniestro o Folio", "KM Traveled",
++                     "Di\xadas Renta", "Total del contrato", "Voucher Total",
++                     "Contract Number", "Numero de Reserva", "First Name"]
++
++
++def test_layout_avasa_registrado():
++    layout = obtener_layout("avasa_contratos")
++    assert layout is LAYOUTS["avasa_contratos"]
++    assert layout.upsert_key == "contract_number"
++
++
++def test_layout_avasa_mapea_encabezados_reales_y_descarta_personales():
++    layout = obtener_layout("avasa_contratos")
++    indices = mapear_columnas(layout, [normalizar_encabezado(h) for h in ENCABEZADOS_AVASA])
++    assert indices == {"contract_number": 0, "siniestro_folio": 1, "dias_renta": 3,
++                       "total_contrato": 4, "voucher_total": 5, "numero_reserva": 7}
++
++
++def test_layout_inexistente():
++    assert obtener_layout("../otra_tabla") is None
++
++
++def _layout(columns, upsert_key="clave"):
++    return ImportLayout(key="prueba", model=None, upsert_key=upsert_key, columns=columns,
++                        roles=("admin",), max_bytes=1024, max_rows=10)
++
++
++def test_registrar_rechaza_tipo_de_columna_desconocido():
++    layout = _layout((ImportColumn("Clave", "clave", "textoo", required=True),))
++    with pytest.raises(ValueError, match="textoo"):
++        _registrar(layout)
++
++
++def test_registrar_rechaza_upsert_key_sin_columna_obligatoria():
++    layout = _layout((ImportColumn("Clave", "clave", "text"),))
++    with pytest.raises(ValueError, match="clave"):
++        _registrar(layout)
++
++
++def test_registrar_rechaza_upsert_key_ausente():
++    layout = _layout((ImportColumn("Monto", "monto", "decimal", required=True),), upsert_key="clave")
++    with pytest.raises(ValueError, match="clave"):
++        _registrar(layout)
++
++
++def test_registrar_devuelve_diccionario_por_key():
++    layout = _layout((ImportColumn("Clave", "clave", "text", required=True),))
++    assert _registrar(layout) == {"prueba": layout}
+-- 
+2.56.0
+
+
+From e74a8512577ce6b4fc4e93c2420007415e8b1617 Mon Sep 17 00:00:00 2001
+From: JoshMorinDev <joshua.morinsalazar@chubb.com>
+Date: Mon, 26 Oct 2026 17:55:53 -0600
+Subject: [PATCH 07/12] feat(importador): servicio de upsert transaccional por
+ lotes
+
+---
+ apiserver/ix/apps/importador/services.py      | 68 +++++++++++++++++++
+ .../ix/tests/importador/test_services.py      | 44 ++++++++++++
+ 2 files changed, 112 insertions(+)
+ create mode 100644 apiserver/ix/apps/importador/services.py
+ create mode 100644 apiserver/ix/tests/importador/test_services.py
+
+diff --git a/apiserver/ix/apps/importador/services.py b/apiserver/ix/apps/importador/services.py
+new file mode 100644
+index 00000000..1f86ab3b
+--- /dev/null
++++ b/apiserver/ix/apps/importador/services.py
+@@ -0,0 +1,68 @@
++import hashlib
++import logging
++
++from sqlalchemy import select
++from sqlalchemy.dialects.mysql import insert
++
++from ix.apps.importador.definitions import LOG_PREFIX, MSG_ERROR_INTERNO, MSG_FILAS_INVALIDAS, TAMANO_LOTE
++from ix.apps.importador.errors import ImportError_
++from ix.apps.importador.parsers import leer_archivo
++from ix.apps.importador.validators import mapear_columnas, validar_filas
++
++
++def _lotes(registros, tamano=TAMANO_LOTE):
++    for inicio in range(0, len(registros), tamano):
++        yield registros[inicio:inicio + tamano]
++
++
++class ImportService:
++
++    @staticmethod
++    def _leer_y_validar(layout, filename, data):
++        encabezados, filas = leer_archivo(filename, data, layout.max_rows)
++        indices = mapear_columnas(layout, encabezados)
++        registros, errores, total_errores = validar_filas(layout, indices, filas)
++        if total_errores:
++            raise ImportError_(MSG_FILAS_INVALIDAS, errores=[e.to_dict() for e in errores])
++        return registros
++
++    @staticmethod
++    def _llaves_existentes(layout, registros, session):
++        columna = getattr(layout.model, layout.upsert_key)
++        existentes = set()
++        for lote in _lotes([r[layout.upsert_key] for r in registros]):
++            existentes.update(session.scalars(select(columna).where(columna.in_(lote))))
++        return existentes
++
++    @staticmethod
++    def _upsert(layout, registros, user_id, session):
++        tabla = layout.model.__table__
++        actualizables = [c.field for c in layout.columns if c.field != layout.upsert_key]
++        for lote in _lotes(registros):
++            sentencia = insert(tabla).values([{**r, "audit_created_by": user_id} for r in lote])
++            cambios = {campo: sentencia.inserted[campo] for campo in actualizables}
++            cambios["audit_updated_by"] = user_id
++            session.execute(sentencia.on_duplicate_key_update(**cambios))
++
++    @staticmethod
++    def importar(layout, filename: str, data: bytes, user_id: int, session, commit: bool = True) -> dict:
++        """Valida el archivo completo y hace upsert en una sola transacción (todo o nada)."""
++        registros = ImportService._leer_y_validar(layout, filename, data)
++        try:
++            existentes = ImportService._llaves_existentes(layout, registros, session)
++            ImportService._upsert(layout, registros, user_id, session)
++            if commit:
++                session.commit()
++        except Exception:
++            session.rollback()
++            logging.exception(f"{LOG_PREFIX} error de BD en layout {layout.key}")
++            raise ImportError_(MSG_ERROR_INTERNO, status=500)
++        resultado = {
++            "layout": layout.key,
++            "total": len(registros),
++            "insertados": len(registros) - len(existentes),
++            "actualizados": len(existentes),
++        }
++        logging.info(f"{LOG_PREFIX} user={user_id} layout={layout.key} archivo={filename} "
++                     f"sha256={hashlib.sha256(data).hexdigest()} {resultado}")
++        return resultado
+diff --git a/apiserver/ix/tests/importador/test_services.py b/apiserver/ix/tests/importador/test_services.py
+new file mode 100644
+index 00000000..18c3e23f
+--- /dev/null
++++ b/apiserver/ix/tests/importador/test_services.py
+@@ -0,0 +1,44 @@
++import pytest
++from sqlalchemy import func, select
++
++from ix.apps.importador.errors import ImportError_
++from ix.apps.importador.layouts import obtener_layout
++from ix.apps.importador.services import ImportService
++from ix.boletas_informativas.auto_relevo.api.auto_relevo_boleta.auto_relevo_boleta_models import (
++    AutorelevoContratoRenta as Modelo,
++)
++from ix.db.tools import create_session, get_db_url
++
++ENCABEZADO = ["Contract Number", "Numero de Reserva", "Días Renta", "Total del contrato", "Voucher Total"]
++USER_ID = 1
++
++
++@pytest.fixture
++def session():
++    s = create_session(get_db_url())
++    yield s
++    s.rollback()
++    s.close()
++
++
++def _contar(session, prefijo):
++    return session.scalar(select(func.count()).select_from(Modelo)
++                          .where(Modelo.contract_number.like(f"{prefijo}%")))
++
++
++def test_carga_y_recarga_idempotente(session, xlsx_bytes):
++    data = xlsx_bytes([ENCABEZADO, ["ZZT1", "R1", 15, 100, 90], ["ZZT2", None, 7, 50, 0]])
++    layout = obtener_layout("avasa_contratos")
++    primera = ImportService.importar(layout, "r.xlsx", data, USER_ID, session, commit=False)
++    segunda = ImportService.importar(layout, "r.xlsx", data, USER_ID, session, commit=False)
++    assert (primera["insertados"], primera["actualizados"]) == (2, 0)
++    assert (segunda["insertados"], segunda["actualizados"]) == (0, 2)
++    assert _contar(session, "ZZT") == 2
++
++
++def test_fila_mala_no_escribe_nada(session, xlsx_bytes):
++    data = xlsx_bytes([ENCABEZADO, ["ZZT3", "R", 1, 1, 1], ["ZZT4", "R", "x", 1, 1]])
++    with pytest.raises(ImportError_) as e:
++        ImportService.importar(obtener_layout("avasa_contratos"), "r.xlsx", data, USER_ID, session, commit=False)
++    assert e.value.errores[0]["fila"] == 3
++    assert _contar(session, "ZZT") == 0
+-- 
+2.56.0
+
+
+From 9965c5d3a1ce94240e0268187de7da950619a202 Mon Sep 17 00:00:00 2001
+From: JoshMorinDev <joshua.morinsalazar@chubb.com>
+Date: Mon, 26 Oct 2026 17:57:52 -0600
+Subject: [PATCH 08/12] =?UTF-8?q?fix(importador):=20auditor=C3=ADa=20en=20?=
+ =?UTF-8?q?upsert=20y=20log=20seguro?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ apiserver/ix/apps/importador/services.py      |  5 +--
+ .../ix/tests/importador/test_services.py      | 36 +++++++++++++++++++
+ 2 files changed, 39 insertions(+), 2 deletions(-)
+
+diff --git a/apiserver/ix/apps/importador/services.py b/apiserver/ix/apps/importador/services.py
+index 1f86ab3b..dcdec61f 100644
+--- a/apiserver/ix/apps/importador/services.py
++++ b/apiserver/ix/apps/importador/services.py
+@@ -1,7 +1,7 @@
+ import hashlib
+ import logging
+ 
+-from sqlalchemy import select
++from sqlalchemy import func, select
+ from sqlalchemy.dialects.mysql import insert
+ 
+ from ix.apps.importador.definitions import LOG_PREFIX, MSG_ERROR_INTERNO, MSG_FILAS_INVALIDAS, TAMANO_LOTE
+@@ -42,6 +42,7 @@ class ImportService:
+             sentencia = insert(tabla).values([{**r, "audit_created_by": user_id} for r in lote])
+             cambios = {campo: sentencia.inserted[campo] for campo in actualizables}
+             cambios["audit_updated_by"] = user_id
++            cambios["audit_updated_at"] = func.utc_timestamp()
+             session.execute(sentencia.on_duplicate_key_update(**cambios))
+ 
+     @staticmethod
+@@ -63,6 +64,6 @@ class ImportService:
+             "insertados": len(registros) - len(existentes),
+             "actualizados": len(existentes),
+         }
+-        logging.info(f"{LOG_PREFIX} user={user_id} layout={layout.key} archivo={filename} "
++        logging.info(f"{LOG_PREFIX} user={user_id} layout={layout.key} archivo={filename!r} "
+                      f"sha256={hashlib.sha256(data).hexdigest()} {resultado}")
+         return resultado
+diff --git a/apiserver/ix/tests/importador/test_services.py b/apiserver/ix/tests/importador/test_services.py
+index 18c3e23f..507472a4 100644
+--- a/apiserver/ix/tests/importador/test_services.py
++++ b/apiserver/ix/tests/importador/test_services.py
+@@ -11,6 +11,7 @@ from ix.db.tools import create_session, get_db_url
+ 
+ ENCABEZADO = ["Contract Number", "Numero de Reserva", "Días Renta", "Total del contrato", "Voucher Total"]
+ USER_ID = 1
++OTRO_USER_ID = 1535
+ 
+ 
+ @pytest.fixture
+@@ -42,3 +43,38 @@ def test_fila_mala_no_escribe_nada(session, xlsx_bytes):
+         ImportService.importar(obtener_layout("avasa_contratos"), "r.xlsx", data, USER_ID, session, commit=False)
+     assert e.value.errores[0]["fila"] == 3
+     assert _contar(session, "ZZT") == 0
++
++
++def _fila(session, llave):
++    return session.execute(
++        select(Modelo.audit_created_by, Modelo.audit_updated_by, Modelo.audit_updated_at)
++        .where(Modelo.contract_number == llave)).one()
++
++
++def test_actualizacion_conserva_creador_y_marca_auditoria(session, xlsx_bytes):
++    data = xlsx_bytes([ENCABEZADO, ["ZZT6", "R", 1, 1, 1]])
++    layout = obtener_layout("avasa_contratos")
++    ImportService.importar(layout, "r.xlsx", data, USER_ID, session, commit=False)
++    ImportService.importar(layout, "r.xlsx", data, OTRO_USER_ID, session, commit=False)
++    creado_por, actualizado_por, actualizado_en = _fila(session, "ZZT6")
++    assert creado_por == USER_ID
++    assert actualizado_por == OTRO_USER_ID
++    assert actualizado_en is not None
++
++
++def test_llave_insensible_a_mayusculas(session, xlsx_bytes):
++    layout = obtener_layout("avasa_contratos")
++    ImportService.importar(layout, "r.xlsx", xlsx_bytes([ENCABEZADO, ["ZZT5", "R", 1, 1, 1]]),
++                           USER_ID, session, commit=False)
++    segunda = ImportService.importar(layout, "r.xlsx", xlsx_bytes([ENCABEZADO, ["zzt5", "R", 1, 1, 1]]),
++                                     USER_ID, session, commit=False)
++    assert (segunda["insertados"], segunda["actualizados"]) == (0, 1)
++    assert _contar(session, "ZZT5") == 1
++
++
++def test_mas_filas_que_un_lote(session, xlsx_bytes):
++    filas = [[f"ZZTB{i:04d}", "R", 1, 1, 1] for i in range(501)]
++    resultado = ImportService.importar(obtener_layout("avasa_contratos"), "r.xlsx",
++                                       xlsx_bytes([ENCABEZADO, *filas]), USER_ID, session, commit=False)
++    assert resultado["insertados"] == 501
++    assert _contar(session, "ZZTB") == 501
+-- 
+2.56.0
+
+
+From 31f7d5116596f056e09f47571a09479949b3d235 Mon Sep 17 00:00:00 2001
+From: JoshMorinDev <joshua.morinsalazar@chubb.com>
+Date: Mon, 26 Oct 2026 18:01:59 -0600
+Subject: [PATCH 09/12] =?UTF-8?q?feat(importador):=20endpoints=20de=20impo?=
+ =?UTF-8?q?rtaci=C3=B3n=20y=20layouts?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ apiserver/ix/app.py                           |  1 +
+ apiserver/ix/apps/importador/endpoints.py     | 59 +++++++++++++++++++
+ .../ix/tests/importador/test_endpoints.py     | 38 ++++++++++++
+ 3 files changed, 98 insertions(+)
+ create mode 100644 apiserver/ix/apps/importador/endpoints.py
+ create mode 100644 apiserver/ix/tests/importador/test_endpoints.py
+
+diff --git a/apiserver/ix/app.py b/apiserver/ix/app.py
+index 73bf11e6..3bf16a02 100755
+--- a/apiserver/ix/app.py
++++ b/apiserver/ix/app.py
+@@ -320,6 +320,7 @@ from ix.apps.form_audit.test_endpoints import test_audit_log
+ from ix.apps.form_responses.endpoints import get_form_responses, create_form_response, update_form_response, \
+     close_form_response, close_k2
+ from ix.apps.form_response_import.endpoints import import_claims, create_form_response_import_all, search_form_response_import
++from ix.apps.importador.endpoints import importar_archivo, listar_layouts
+ from ix.apps.claims_monitoring.endpoints import create_claims_report, get_reports
+ from ix.apps.file_uploads.endpoints import upload_file
+ from ix.api import swagger_generator
+diff --git a/apiserver/ix/apps/importador/endpoints.py b/apiserver/ix/apps/importador/endpoints.py
+new file mode 100644
+index 00000000..999c90f9
+--- /dev/null
++++ b/apiserver/ix/apps/importador/endpoints.py
+@@ -0,0 +1,59 @@
++from flask import g, request
++
++from ix.api import errors, wrappers
++from ix.apps.importador.definitions import API_URI_BASE, MSG_LAYOUT_INEXISTENTE, MSG_SIN_ARCHIVO, MSG_TAMANO
++from ix.apps.importador.errors import ImportError_
++from ix.apps.importador.layouts import LAYOUTS, obtener_layout
++from ix.apps.importador.services import ImportService
++from ix.config import config
++
++
++def _error(detalle, status, data=None):
++    raise errors.ApiError({"data": data or [], "detail": detalle}, status)
++
++
++def _validar_rol(layout):
++    roles_usuario = {r.name for r in g.current_user.roles}
++    if config.ADMIN not in roles_usuario and not roles_usuario.intersection(layout.roles):
++        raise errors.forbidden_error
++
++
++def _leer_limitado(archivo, max_bytes):
++    data = archivo.stream.read(max_bytes + 1)
++    if len(data) > max_bytes:
++        _error(MSG_TAMANO, 413)
++    return data
++
++
++def _describir_layout(layout):
++    return {
++        "key": layout.key,
++        "columnas": [{"header": c.header, "required": c.required} for c in layout.columns],
++        "max_rows": layout.max_rows,
++    }
++
++
++@wrappers.api_resource(route=f"{API_URI_BASE}/<layout_key>", method="POST")
++@wrappers.auth
++@wrappers.doc('Importa un archivo .xlsx o .csv según el layout indicado.')
++def importar_archivo(layout_key):
++    layout = obtener_layout(layout_key)
++    if not layout:
++        _error(MSG_LAYOUT_INEXISTENTE, 404)
++    _validar_rol(layout)
++    archivo = request.files.get("file")
++    if not archivo or not archivo.filename:
++        _error(MSG_SIN_ARCHIVO, 400)
++    data = _leer_limitado(archivo, layout.max_bytes)
++    try:
++        resultado = ImportService.importar(layout, archivo.filename, data, g.current_user.id, g.s())
++    except ImportError_ as e:
++        _error(e.mensaje, e.status, e.errores)
++    return {"success": True, "data": resultado, "error": None}
++
++
++@wrappers.api_resource(route=f"{API_URI_BASE}/layouts", method="GET")
++@wrappers.auth
++@wrappers.doc('Lista los layouts de importación disponibles.')
++def listar_layouts():
++    return {"success": True, "data": [_describir_layout(l) for l in LAYOUTS.values()], "error": None}
+diff --git a/apiserver/ix/tests/importador/test_endpoints.py b/apiserver/ix/tests/importador/test_endpoints.py
+new file mode 100644
+index 00000000..9ace95e6
+--- /dev/null
++++ b/apiserver/ix/tests/importador/test_endpoints.py
+@@ -0,0 +1,38 @@
++import io
++
++URL = "/api/importador"
++
++
++def _post(client, layout, data, nombre="r.xlsx", token=None):
++    headers = {"Authorization": f"Bearer {token}"} if token else {}
++    return client.post(f"{URL}/{layout}", headers=headers, content_type="multipart/form-data",
++                       data={"file": (io.BytesIO(data), nombre)})
++
++
++def test_sin_token_401(client):
++    assert _post(client, "avasa_contratos", b"x").status_code == 401
++
++
++def test_layout_inexistente_404(client, token):
++    assert _post(client, "no_existe", b"x", token=token).status_code == 404
++
++
++def test_sin_archivo_400(client, token):
++    r = client.post(f"{URL}/avasa_contratos", headers={"Authorization": f"Bearer {token}"})
++    assert r.status_code == 400
++
++
++def test_excede_tamano_413(client, token):
++    assert _post(client, "avasa_contratos", b"0" * (5 * 1024 * 1024 + 1), token=token).status_code == 413
++
++
++def test_columnas_faltantes_400(client, token, xlsx_bytes):
++    r = _post(client, "avasa_contratos", xlsx_bytes([["Contract Number"], ["ZZE1"]]), token=token)
++    assert r.status_code == 400
++    assert "Días Renta" in r.get_json()["error"]["data"]
++
++
++def test_lista_layouts(client, token):
++    r = client.get(f"{URL}/layouts", headers={"Authorization": f"Bearer {token}"})
++    assert r.status_code == 200
++    assert "avasa_contratos" in [l["key"] for l in r.get_json()["data"]]
+-- 
+2.56.0
+
+
+From eb591ef9f565e1077d26685b8b444b5374b8b4c2 Mon Sep 17 00:00:00 2001
+From: JoshMorinDev <joshua.morinsalazar@chubb.com>
+Date: Mon, 26 Oct 2026 18:04:33 -0600
+Subject: [PATCH 10/12] =?UTF-8?q?fix(importador):=20total=20de=20errores,?=
+ =?UTF-8?q?=20l=C3=ADmite=20por=20content-length=20y=20prueba=20de=20roles?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ apiserver/ix/apps/importador/definitions.py   |  1 +
+ apiserver/ix/apps/importador/endpoints.py     | 19 +++++--
+ apiserver/ix/apps/importador/errors.py        |  4 +-
+ apiserver/ix/apps/importador/services.py      |  3 +-
+ .../ix/tests/importador/test_endpoints.py     | 53 +++++++++++++++++++
+ 5 files changed, 74 insertions(+), 6 deletions(-)
+
+diff --git a/apiserver/ix/apps/importador/definitions.py b/apiserver/ix/apps/importador/definitions.py
+index 9cac3099..318671a4 100644
+--- a/apiserver/ix/apps/importador/definitions.py
++++ b/apiserver/ix/apps/importador/definitions.py
+@@ -1,6 +1,7 @@
+ API_URI_BASE = "/importador"
+ LOG_PREFIX = "IMPORTADOR -"
+ TAMANO_LOTE = 500
++MARGEN_MULTIPART = 64 * 1024
+ MAX_ERRORES_RESPUESTA = 100
+ MAX_BYTES_DESCOMPRIMIDOS = 50 * 1024 * 1024
+ FIRMA_ZIP = b"PK\x03\x04"
+diff --git a/apiserver/ix/apps/importador/endpoints.py b/apiserver/ix/apps/importador/endpoints.py
+index 999c90f9..5c23f34d 100644
+--- a/apiserver/ix/apps/importador/endpoints.py
++++ b/apiserver/ix/apps/importador/endpoints.py
+@@ -1,15 +1,20 @@
+ from flask import g, request
+ 
+ from ix.api import errors, wrappers
+-from ix.apps.importador.definitions import API_URI_BASE, MSG_LAYOUT_INEXISTENTE, MSG_SIN_ARCHIVO, MSG_TAMANO
++from ix.apps.importador.definitions import (
++    API_URI_BASE, MARGEN_MULTIPART, MSG_LAYOUT_INEXISTENTE, MSG_SIN_ARCHIVO, MSG_TAMANO,
++)
+ from ix.apps.importador.errors import ImportError_
+ from ix.apps.importador.layouts import LAYOUTS, obtener_layout
+ from ix.apps.importador.services import ImportService
+ from ix.config import config
+ 
+ 
+-def _error(detalle, status, data=None):
+-    raise errors.ApiError({"data": data or [], "detail": detalle}, status)
++def _error(detalle, status, data=None, total_errores=None):
++    cuerpo = {"data": data or [], "detail": detalle}
++    if total_errores is not None:
++        cuerpo["total_errores"] = total_errores
++    raise errors.ApiError(cuerpo, status)
+ 
+ 
+ def _validar_rol(layout):
+@@ -18,6 +23,11 @@ def _validar_rol(layout):
+         raise errors.forbidden_error
+ 
+ 
++def _validar_content_length(layout):
++    if request.content_length is not None and request.content_length > layout.max_bytes + MARGEN_MULTIPART:
++        _error(MSG_TAMANO, 413)
++
++
+ def _leer_limitado(archivo, max_bytes):
+     data = archivo.stream.read(max_bytes + 1)
+     if len(data) > max_bytes:
+@@ -41,6 +51,7 @@ def importar_archivo(layout_key):
+     if not layout:
+         _error(MSG_LAYOUT_INEXISTENTE, 404)
+     _validar_rol(layout)
++    _validar_content_length(layout)
+     archivo = request.files.get("file")
+     if not archivo or not archivo.filename:
+         _error(MSG_SIN_ARCHIVO, 400)
+@@ -48,7 +59,7 @@ def importar_archivo(layout_key):
+     try:
+         resultado = ImportService.importar(layout, archivo.filename, data, g.current_user.id, g.s())
+     except ImportError_ as e:
+-        _error(e.mensaje, e.status, e.errores)
++        _error(e.mensaje, e.status, e.errores, e.total if e.errores else None)
+     return {"success": True, "data": resultado, "error": None}
+ 
+ 
+diff --git a/apiserver/ix/apps/importador/errors.py b/apiserver/ix/apps/importador/errors.py
+index c6e6df30..e0d4fea6 100644
+--- a/apiserver/ix/apps/importador/errors.py
++++ b/apiserver/ix/apps/importador/errors.py
+@@ -5,11 +5,13 @@ from typing import Any
+ class ImportError_(Exception):
+     """Error de importación con estatus HTTP y detalle por fila opcional."""
+ 
+-    def __init__(self, mensaje: str, status: int = 400, errores: list | None = None):
++    def __init__(self, mensaje: str, status: int = 400, errores: list | None = None,
++                 total: int | None = None):
+         super().__init__(mensaje)
+         self.mensaje = mensaje
+         self.status = status
+         self.errores = errores or []
++        self.total = len(self.errores) if total is None else total
+ 
+ 
+ @dataclass(frozen=True)
+diff --git a/apiserver/ix/apps/importador/services.py b/apiserver/ix/apps/importador/services.py
+index dcdec61f..8617ef9b 100644
+--- a/apiserver/ix/apps/importador/services.py
++++ b/apiserver/ix/apps/importador/services.py
+@@ -23,7 +23,8 @@ class ImportService:
+         indices = mapear_columnas(layout, encabezados)
+         registros, errores, total_errores = validar_filas(layout, indices, filas)
+         if total_errores:
+-            raise ImportError_(MSG_FILAS_INVALIDAS, errores=[e.to_dict() for e in errores])
++            raise ImportError_(MSG_FILAS_INVALIDAS, errores=[e.to_dict() for e in errores],
++                              total=total_errores)
+         return registros
+ 
+     @staticmethod
+diff --git a/apiserver/ix/tests/importador/test_endpoints.py b/apiserver/ix/tests/importador/test_endpoints.py
+index 9ace95e6..4bd4f360 100644
+--- a/apiserver/ix/tests/importador/test_endpoints.py
++++ b/apiserver/ix/tests/importador/test_endpoints.py
+@@ -1,4 +1,16 @@
+ import io
++from dataclasses import replace
++from types import SimpleNamespace
++
++import pytest
++from flask import g
++
++from ix.api.errors import ApiError
++from ix.app import app
++from ix.apps.importador.definitions import MARGEN_MULTIPART, MSG_TAMANO
++from ix.apps.importador.endpoints import _validar_rol
++from ix.apps.importador.layouts import LAYOUTS
++from ix.config import config
+ 
+ URL = "/api/importador"
+ 
+@@ -36,3 +48,44 @@ def test_lista_layouts(client, token):
+     r = client.get(f"{URL}/layouts", headers={"Authorization": f"Bearer {token}"})
+     assert r.status_code == 200
+     assert "avasa_contratos" in [l["key"] for l in r.get_json()["data"]]
++
++
++def test_total_errores_en_400(client, token, xlsx_bytes):
++    filas = [["Contract Number", "Días Renta", "Total del contrato", "Voucher Total"]]
++    filas += [[f"C{i}", "abc", 1, 1] for i in range(150)]
++    r = _post(client, "avasa_contratos", xlsx_bytes(filas), token=token)
++    cuerpo = r.get_json()["error"]
++    assert r.status_code == 400
++    assert len(cuerpo["data"]) == 100
++    assert cuerpo["total_errores"] == 150
++
++
++def test_content_length_excedido_413_sin_leer_archivo(client, token):
++    limite = LAYOUTS["avasa_contratos"].max_bytes + MARGEN_MULTIPART
++    r = _post(client, "avasa_contratos", b"0" * (limite + 1), token=token)
++    assert r.status_code == 413
++    assert r.get_json()["error"]["detail"] == MSG_TAMANO
++
++
++def _usuario(*roles):
++    return SimpleNamespace(roles=[SimpleNamespace(name=r) for r in roles])
++
++
++def _validar_con(roles, layout):
++    with app.test_request_context():
++        g.current_user = _usuario(*roles)
++        _validar_rol(layout)
++
++
++def test_rol_sin_permiso_403():
++    with pytest.raises(ApiError) as e:
++        _validar_con(["agent"], LAYOUTS["avasa_contratos"])
++    assert e.value.error_code == 403
++
++
++def test_rol_supervisor_permitido():
++    _validar_con([config.SUPERVISOR], LAYOUTS["avasa_contratos"])
++
++
++def test_admin_permitido_aunque_el_layout_no_lo_liste():
++    _validar_con([config.ADMIN], replace(LAYOUTS["avasa_contratos"], roles=(config.SUPERVISOR,)))
+-- 
+2.56.0
+
+
+From 593448a5ae4e31ec6119218dfc7b8edd8ea731ab Mon Sep 17 00:00:00 2001
+From: JoshMorinDev <joshua.morinsalazar@chubb.com>
+Date: Mon, 26 Oct 2026 18:13:18 -0600
+Subject: [PATCH 11/12] =?UTF-8?q?fix(importador):=20l=C3=ADmites=20de=20co?=
+ =?UTF-8?q?lumna,=20chunked=20y=20endurecimiento?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ apiserver/ix/apps/importador/definitions.py   | 12 ++++-
+ apiserver/ix/apps/importador/endpoints.py     | 41 ++++++++++++++++-
+ apiserver/ix/apps/importador/layouts.py       |  5 ++
+ apiserver/ix/apps/importador/validators.py    | 42 ++++++++++++-----
+ .../auto_relevo_boleta_models.py              |  1 +
+ .../ix/tests/importador/test_endpoints.py     | 29 +++++++++++-
+ apiserver/ix/tests/importador/test_layouts.py |  9 ++++
+ .../importador/test_modelo_contrato_renta.py  |  4 ++
+ .../ix/tests/importador/test_validators.py    | 46 +++++++++++++++++--
+ 9 files changed, 171 insertions(+), 18 deletions(-)
+
+diff --git a/apiserver/ix/apps/importador/definitions.py b/apiserver/ix/apps/importador/definitions.py
+index 318671a4..0cdbf267 100644
+--- a/apiserver/ix/apps/importador/definitions.py
++++ b/apiserver/ix/apps/importador/definitions.py
+@@ -5,7 +5,7 @@ MARGEN_MULTIPART = 64 * 1024
+ MAX_ERRORES_RESPUESTA = 100
+ MAX_BYTES_DESCOMPRIMIDOS = 50 * 1024 * 1024
+ FIRMA_ZIP = b"PK\x03\x04"
+-PREFIJOS_FORMULA = ("=", "+", "-", "@")
++PREFIJOS_FORMULA = ("=", "+", "-", "@", "\t", "\r")
+ 
+ MSG_SIN_ARCHIVO = "Debe proporcionar un archivo en el campo 'file'"
+ MSG_LAYOUT_INEXISTENTE = "Layout de importación no encontrado"
+@@ -16,3 +16,13 @@ MSG_DESCOMPRESION = "El archivo excede el tamaño descomprimido permitido"
+ MSG_COLUMNAS = "Faltan columnas obligatorias"
+ MSG_FILAS_INVALIDAS = "El archivo tiene filas inválidas; no se importó nada"
+ MSG_ERROR_INTERNO = "No se pudo completar la importación"
++MSG_FORMULA = "No se permiten fórmulas"
++MSG_ENTERO = "Entero inválido"
++MSG_NUMERO = "Número inválido"
++MSG_NUMERO_RANGO = "Número fuera de rango"
++MSG_FECHA = "Fecha inválida (AAAA-MM-DD)"
++MSG_OBLIGATORIO = "Valor obligatorio"
++MSG_LLAVE_DUPLICADA = "Llave duplicada en el archivo"
++MSG_COLUMNA_OBLIGATORIA = "Columna obligatoria"
++MSG_EXCEDE_CARACTERES = "Excede {} caracteres"
++MAX_ORDEN_NUMERO = 18
+diff --git a/apiserver/ix/apps/importador/endpoints.py b/apiserver/ix/apps/importador/endpoints.py
+index 5c23f34d..222f04a3 100644
+--- a/apiserver/ix/apps/importador/endpoints.py
++++ b/apiserver/ix/apps/importador/endpoints.py
+@@ -1,4 +1,5 @@
+ from flask import g, request
++from werkzeug.exceptions import RequestEntityTooLarge
+ 
+ from ix.api import errors, wrappers
+ from ix.apps.importador.definitions import (
+@@ -28,6 +29,44 @@ def _validar_content_length(layout):
+         _error(MSG_TAMANO, 413)
+ 
+ 
++class _EntradaLimitada:
++    """Envuelve wsgi.input y falla al superar el límite cuando no hay Content-Length."""
++
++    def __init__(self, flujo, limite):
++        self._flujo = flujo
++        self._restante = limite
++
++    def _consumir(self, datos):
++        self._restante -= len(datos)
++        if self._restante < 0:
++            raise RequestEntityTooLarge()
++        return datos
++
++    def read(self, tamano=-1):
++        if tamano is None or tamano < 0:
++            tamano = self._restante + 1
++        return self._consumir(self._flujo.read(min(tamano, self._restante + 1)))
++
++    def readline(self, tamano=-1):
++        if tamano is None or tamano < 0:
++            tamano = self._restante + 1
++        return self._consumir(self._flujo.readline(min(tamano, self._restante + 1)))
++
++    def __iter__(self):
++        while linea := self.readline():
++            yield linea
++
++
++def _obtener_archivo(layout):
++    if request.content_length is None:
++        entrada = request.environ["wsgi.input"]
++        request.environ["wsgi.input"] = _EntradaLimitada(entrada, layout.max_bytes + MARGEN_MULTIPART)
++    try:
++        return request.files.get("file")
++    except RequestEntityTooLarge:
++        _error(MSG_TAMANO, 413)
++
++
+ def _leer_limitado(archivo, max_bytes):
+     data = archivo.stream.read(max_bytes + 1)
+     if len(data) > max_bytes:
+@@ -52,7 +91,7 @@ def importar_archivo(layout_key):
+         _error(MSG_LAYOUT_INEXISTENTE, 404)
+     _validar_rol(layout)
+     _validar_content_length(layout)
+-    archivo = request.files.get("file")
++    archivo = _obtener_archivo(layout)
+     if not archivo or not archivo.filename:
+         _error(MSG_SIN_ARCHIVO, 400)
+     data = _leer_limitado(archivo, layout.max_bytes)
+diff --git a/apiserver/ix/apps/importador/layouts.py b/apiserver/ix/apps/importador/layouts.py
+index 8265cbaf..0fcd0ad7 100644
+--- a/apiserver/ix/apps/importador/layouts.py
++++ b/apiserver/ix/apps/importador/layouts.py
+@@ -46,9 +46,14 @@ AVASA_CONTRATOS = ImportLayout(
+ )
+ 
+ 
++LLAVE_RESERVADA = "layouts"
++
++
+ def _registrar(*layouts: ImportLayout) -> dict:
+     registro = {}
+     for layout in layouts:
++        if layout.key == LLAVE_RESERVADA:
++            raise ValueError(f"La llave de layout '{LLAVE_RESERVADA}' está reservada")
+         for columna in layout.columns:
+             if columna.kind not in CONVERSORES:
+                 raise ValueError(
+diff --git a/apiserver/ix/apps/importador/validators.py b/apiserver/ix/apps/importador/validators.py
+index b0da8526..9d0ebf3f 100644
+--- a/apiserver/ix/apps/importador/validators.py
++++ b/apiserver/ix/apps/importador/validators.py
+@@ -1,18 +1,21 @@
+ from datetime import date, datetime
+ from decimal import Decimal, InvalidOperation
+ 
+-from ix.apps.importador.definitions import MAX_ERRORES_RESPUESTA, MSG_COLUMNAS, PREFIJOS_FORMULA
++from sqlalchemy import Numeric
++
++from ix.apps.importador.definitions import (
++    MAX_ERRORES_RESPUESTA, MAX_ORDEN_NUMERO, MSG_COLUMNA_OBLIGATORIA, MSG_COLUMNAS,
++    MSG_ENTERO, MSG_EXCEDE_CARACTERES, MSG_FECHA, MSG_FORMULA, MSG_LLAVE_DUPLICADA,
++    MSG_NUMERO, MSG_NUMERO_RANGO, MSG_OBLIGATORIO, PREFIJOS_FORMULA,
++)
+ from ix.apps.importador.errors import ImportError_, RowError
+ from ix.apps.importador.parsers import normalizar_encabezado
+ 
+-MSG_NUMERO = "Número inválido"
+-MSG_FECHA = "Fecha inválida (AAAA-MM-DD)"
+-
+ 
+ def _texto(valor):
+     texto = str(valor).strip()
+-    if texto.startswith(PREFIJOS_FORMULA):
+-        raise ValueError("No se permiten fórmulas")
++    if str(valor).startswith(PREFIJOS_FORMULA) or texto.startswith(PREFIJOS_FORMULA):
++        raise ValueError(MSG_FORMULA)
+     return texto
+ 
+ 
+@@ -23,6 +26,8 @@ def _numero(valor) -> Decimal:
+         raise ValueError(MSG_NUMERO)
+     if not numero.is_finite():
+         raise ValueError(MSG_NUMERO)
++    if numero.adjusted() > MAX_ORDEN_NUMERO:
++        raise ValueError(MSG_NUMERO_RANGO)
+     return numero
+ 
+ 
+@@ -36,7 +41,7 @@ def _decimal(valor):
+ def _entero(valor):
+     numero = _numero(valor)
+     if numero != numero.to_integral_value():
+-        raise ValueError("Entero inválido")
++        raise ValueError(MSG_ENTERO)
+     return int(numero)
+ 
+ 
+@@ -65,12 +70,25 @@ def mapear_columnas(layout, encabezados: list[str]) -> dict[str, int]:
+         objetivo = normalizar_encabezado(columna.header)
+         if objetivo in encabezados:
+             indices[columna.field] = encabezados.index(objetivo)
+-    faltantes = [c.header for c in layout.columns if c.required and c.field not in indices]
++    faltantes = [{"columna": c.header, "mensaje": MSG_COLUMNA_OBLIGATORIA}
++                 for c in layout.columns if c.required and c.field not in indices]
+     if faltantes:
+         raise ImportError_(MSG_COLUMNAS, errores=faltantes)
+     return indices
+ 
+ 
++def _validar_limite(layout, columna, valor):
++    if layout.model is None:
++        return
++    tipo = layout.model.__table__.c[columna.field].type
++    longitud = getattr(tipo, "length", None)
++    if longitud is not None and isinstance(valor, str) and len(valor) > longitud:
++        raise ValueError(MSG_EXCEDE_CARACTERES.format(longitud))
++    if isinstance(tipo, Numeric) and tipo.precision is not None and isinstance(valor, Decimal):
++        if abs(valor) >= Decimal(10) ** (tipo.precision - (tipo.scale or 0)):
++            raise ValueError(MSG_NUMERO_RANGO)
++
++
+ def _convertir_fila(layout, indices, numero, valores):
+     registro, errores = {}, []
+     for columna in layout.columns:
+@@ -80,11 +98,13 @@ def _convertir_fila(layout, indices, numero, valores):
+         crudo = valores[indice] if indice < len(valores) else None
+         if crudo is None or str(crudo).strip() == "":
+             if columna.required:
+-                errores.append(RowError(numero, columna.header, crudo, "Valor obligatorio"))
++                errores.append(RowError(numero, columna.header, crudo, MSG_OBLIGATORIO))
+             registro[columna.field] = None
+             continue
+         try:
+-            registro[columna.field] = CONVERSORES[columna.kind](crudo)
++            valor = CONVERSORES[columna.kind](crudo)
++            _validar_limite(layout, columna, valor)
++            registro[columna.field] = valor
+         except ValueError as e:
+             errores.append(RowError(numero, columna.header, crudo, str(e)))
+     return registro, errores
+@@ -105,7 +125,7 @@ def validar_filas(layout, indices, filas):
+         if llave is not None:
+             clave = str(llave).casefold()
+             if not errores_fila and clave in vistas:
+-                errores_fila.append(RowError(numero, encabezado_llave, llave, "Llave duplicada en el archivo"))
++                errores_fila.append(RowError(numero, encabezado_llave, llave, MSG_LLAVE_DUPLICADA))
+             vistas.add(clave)
+         total += len(errores_fila)
+         errores.extend(errores_fila[:max(0, MAX_ERRORES_RESPUESTA - len(errores))])
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_models.py b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_models.py
+index 0e6a97d1..32bd3895 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_models.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_models.py
+@@ -161,6 +161,7 @@ class AutorelevoContratoRenta(database.Model, Base, AuditEntity):
+     __tablename__ = 'autorelevo_contrato_renta'
+ 
+     id = Column(Integer, primary_key=True, autoincrement=True)
++    audit_created_by = Column(Integer, ForeignKey('user_.id'), nullable=True)
+     contract_number = Column(String(20), unique=True, nullable=False)
+     numero_reserva = Column(String(20), nullable=True)
+     siniestro_folio = Column(String(30), nullable=True)
+diff --git a/apiserver/ix/tests/importador/test_endpoints.py b/apiserver/ix/tests/importador/test_endpoints.py
+index 4bd4f360..9d6f6bd9 100644
+--- a/apiserver/ix/tests/importador/test_endpoints.py
++++ b/apiserver/ix/tests/importador/test_endpoints.py
+@@ -4,11 +4,12 @@ from types import SimpleNamespace
+ 
+ import pytest
+ from flask import g
++from werkzeug.exceptions import RequestEntityTooLarge
+ 
+ from ix.api.errors import ApiError
+ from ix.app import app
+ from ix.apps.importador.definitions import MARGEN_MULTIPART, MSG_TAMANO
+-from ix.apps.importador.endpoints import _validar_rol
++from ix.apps.importador.endpoints import _EntradaLimitada, _validar_rol
+ from ix.apps.importador.layouts import LAYOUTS
+ from ix.config import config
+ 
+@@ -41,7 +42,7 @@ def test_excede_tamano_413(client, token):
+ def test_columnas_faltantes_400(client, token, xlsx_bytes):
+     r = _post(client, "avasa_contratos", xlsx_bytes([["Contract Number"], ["ZZE1"]]), token=token)
+     assert r.status_code == 400
+-    assert "Días Renta" in r.get_json()["error"]["data"]
++    assert {"columna": "Días Renta", "mensaje": "Columna obligatoria"} in r.get_json()["error"]["data"]
+ 
+ 
+ def test_lista_layouts(client, token):
+@@ -89,3 +90,27 @@ def test_rol_supervisor_permitido():
+ 
+ def test_admin_permitido_aunque_el_layout_no_lo_liste():
+     _validar_con([config.ADMIN], replace(LAYOUTS["avasa_contratos"], roles=(config.SUPERVISOR,)))
++
++
++def test_multipart_chunked_sin_content_length_413(client, token):
++    limite = LAYOUTS["avasa_contratos"].max_bytes
++    frontera = "XfronteraX"
++    cuerpo = (f"--{frontera}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"r.xlsx\"\r\n\r\n"
++              .encode() + b"0" * (limite + MARGEN_MULTIPART + 10) + f"\r\n--{frontera}--\r\n".encode())
++    r = client.post(f"{URL}/avasa_contratos", input_stream=io.BytesIO(cuerpo),
++                    environ_overrides={"wsgi.input_terminated": True},
++                    headers={"Authorization": f"Bearer {token}", "Transfer-Encoding": "chunked",
++                             "Content-Type": f"multipart/form-data; boundary={frontera}"})
++    assert r.status_code == 413
++    assert r.get_json()["error"]["detail"] == MSG_TAMANO
++
++
++def test_entrada_limitada_corta_la_lectura_al_superar_el_limite():
++    entrada = _EntradaLimitada(io.BytesIO(b"0" * 100), 10)
++    with pytest.raises(RequestEntityTooLarge):
++        while entrada.read(4):
++            pass
++
++
++def test_entrada_limitada_permite_hasta_el_limite():
++    assert _EntradaLimitada(io.BytesIO(b"0" * 10), 10).read(-1) == b"0" * 10
+diff --git a/apiserver/ix/tests/importador/test_layouts.py b/apiserver/ix/tests/importador/test_layouts.py
+index bd8fd409..6590f1e3 100644
+--- a/apiserver/ix/tests/importador/test_layouts.py
++++ b/apiserver/ix/tests/importador/test_layouts.py
+@@ -1,3 +1,5 @@
++import dataclasses
++
+ import pytest
+ 
+ from ix.apps.importador.layouts import (
+@@ -58,3 +60,10 @@ def test_registrar_rechaza_upsert_key_ausente():
+ def test_registrar_devuelve_diccionario_por_key():
+     layout = _layout((ImportColumn("Clave", "clave", "text", required=True),))
+     assert _registrar(layout) == {"prueba": layout}
++
++
++def test_registrar_reserva_la_llave_layouts():
++    layout = dataclasses.replace(_layout((ImportColumn("Clave", "clave", "text", required=True),)),
++                                 key="layouts")
++    with pytest.raises(ValueError, match="layouts"):
++        _registrar(layout)
+diff --git a/apiserver/ix/tests/importador/test_modelo_contrato_renta.py b/apiserver/ix/tests/importador/test_modelo_contrato_renta.py
+index a717b969..241bfd60 100644
+--- a/apiserver/ix/tests/importador/test_modelo_contrato_renta.py
++++ b/apiserver/ix/tests/importador/test_modelo_contrato_renta.py
+@@ -9,3 +9,7 @@ def test_modelo_mapea_tabla_y_columnas():
+     assert {"contract_number", "numero_reserva", "siniestro_folio",
+             "dias_renta", "total_contrato", "voucher_total",
+             "audit_created_by", "active_record"} <= columnas
++
++
++def test_audit_created_by_es_nullable():
++    assert AutorelevoContratoRenta.__table__.c.audit_created_by.nullable is True
+diff --git a/apiserver/ix/tests/importador/test_validators.py b/apiserver/ix/tests/importador/test_validators.py
+index 518261e2..981c8863 100644
+--- a/apiserver/ix/tests/importador/test_validators.py
++++ b/apiserver/ix/tests/importador/test_validators.py
+@@ -5,7 +5,7 @@ from decimal import Decimal
+ import pytest
+ 
+ from ix.apps.importador.errors import ImportError_
+-from ix.apps.importador.layouts import ImportColumn, ImportLayout
++from ix.apps.importador.layouts import ImportColumn, ImportLayout, obtener_layout
+ from ix.apps.importador.validators import mapear_columnas, validar_filas
+ 
+ LAYOUT = ImportLayout(
+@@ -47,7 +47,7 @@ def test_mapear_usa_primera_aparicion_e_ignora_extras():
+ def test_mapear_reporta_obligatorias_faltantes():
+     with pytest.raises(ImportError_) as e:
+         mapear_columnas(LAYOUT, ["clave"])
+-    assert e.value.errores == ["Monto"]
++    assert e.value.errores == [{"columna": "Monto", "mensaje": "Columna obligatoria"}]
+ 
+ 
+ def test_convierte_tipos():
+@@ -114,7 +114,7 @@ def test_decimal_rechaza_no_finitos(valor):
+     assert total == 1 and errores[0].columna == "Monto"
+ 
+ 
+-@pytest.mark.parametrize("clave", ["+1", "-1", "@x", "=x"])
++@pytest.mark.parametrize("clave", ["+1", "-1", "@x", "=x", "\tx", "\rx"])
+ def test_texto_rechaza_prefijos_de_formula(clave):
+     _, errores, total = validar_filas(LAYOUT, INDICES, [(2, [clave, "1"])])
+     assert total == 1 and errores[0].columna == "Clave"
+@@ -142,3 +142,43 @@ def test_upsert_key_fuera_de_columnas_falla_claro():
+     layout = dataclasses.replace(LAYOUT, upsert_key="inexistente")
+     with pytest.raises(ValueError, match="inexistente"):
+         validar_filas(layout, {"clave": 0, "monto": 1}, [(2, ["F1", "1"])])
++
++
++AVASA = obtener_layout("avasa_contratos")
++INDICES_AVASA = {"contract_number": 0, "numero_reserva": 1, "dias_renta": 2,
++                 "total_contrato": 3, "voucher_total": 4}
++
++
++def _fila_avasa(contrato="C1", reserva=None, dias="1", total="1", voucher="1"):
++    return validar_filas(AVASA, INDICES_AVASA, [(2, [contrato, reserva, dias, total, voucher])])
++
++
++def test_texto_excede_longitud_de_columna():
++    _, errores, total = _fila_avasa(contrato="C" * 21)
++    assert total == 1 and errores[0].columna == "Contract Number"
++    assert errores[0].mensaje == "Excede 20 caracteres"
++
++
++def test_texto_en_el_limite_de_columna_es_valido():
++    registros, errores, _ = _fila_avasa(contrato="C" * 20)
++    assert errores == [] and len(registros) == 1
++
++
++@pytest.mark.parametrize("dias", ["10000", "-10000", "9999.995"])
++def test_decimal_fuera_de_rango(dias):
++    _, errores, total = _fila_avasa(dias=dias)
++    assert total == 1 and errores[0].columna == "Días Renta"
++    assert errores[0].mensaje == "Número fuera de rango"
++
++
++def test_decimal_en_el_limite_es_valido():
++    registros, errores, _ = _fila_avasa(dias="9999.99")
++    assert errores == [] and registros[0]["dias_renta"] == Decimal("9999.99")
++
++
++@pytest.mark.parametrize("valor", ["1E999999999", "1e25", "-1E100"])
++def test_exponente_enorme_se_rechaza_sin_calcular(valor):
++    _, errores, total = _fila_avasa(dias=valor)
++    assert total == 1 and errores[0].mensaje == "Número fuera de rango"
++    _, errores, total = validar_filas(LAYOUT, INDICES, [(2, ["F1", "1", valor, None])])
++    assert total == 1 and errores[0].columna == "Dias"
+-- 
+2.56.0
+
+
+From c26eb0a4dfc5be54ecd01d5f59bc44dc1ef3a6d1 Mon Sep 17 00:00:00 2001
+From: JoshMorinDev <joshua.morinsalazar@chubb.com>
+Date: Mon, 26 Oct 2026 22:31:05 -0600
+Subject: [PATCH 12/12] feat(importador): fila de totales como control
+
+---
+ apiserver/ix/apps/importador/definitions.py   |  3 +
+ apiserver/ix/apps/importador/layouts.py       | 30 +++++++
+ apiserver/ix/apps/importador/validators.py    | 80 ++++++++++++++++---
+ apiserver/ix/tests/importador/test_layouts.py | 27 +++++++
+ .../ix/tests/importador/test_services.py      | 43 ++++++++--
+ .../ix/tests/importador/test_validators.py    | 77 +++++++++++++++++-
+ 6 files changed, 240 insertions(+), 20 deletions(-)
+
+diff --git a/apiserver/ix/apps/importador/definitions.py b/apiserver/ix/apps/importador/definitions.py
+index 0cdbf267..7cdd8c70 100644
+--- a/apiserver/ix/apps/importador/definitions.py
++++ b/apiserver/ix/apps/importador/definitions.py
+@@ -26,3 +26,6 @@ MSG_LLAVE_DUPLICADA = "Llave duplicada en el archivo"
+ MSG_COLUMNA_OBLIGATORIA = "Columna obligatoria"
+ MSG_EXCEDE_CARACTERES = "Excede {} caracteres"
+ MAX_ORDEN_NUMERO = 18
++MSG_SIN_FILA_TOTAL = "El archivo no trae la fila de totales"
++MSG_TOTALES_NO_CUADRAN = "Los totales del archivo no cuadran con la suma de las filas"
++MSG_FILA_TOTAL_REPETIDA = "Fila de totales repetida"
+diff --git a/apiserver/ix/apps/importador/layouts.py b/apiserver/ix/apps/importador/layouts.py
+index 0fcd0ad7..ed74b00a 100644
+--- a/apiserver/ix/apps/importador/layouts.py
++++ b/apiserver/ix/apps/importador/layouts.py
+@@ -15,6 +15,15 @@ class ImportColumn:
+     required: bool = False
+ 
+ 
++@dataclass(frozen=True)
++class FilaTotal:
++    """Fila de totales del archivo: se aparta de la carga y sus sumas se verifican."""
++
++    header: str
++    marca: str
++    campos: tuple[str, ...]
++
++
+ @dataclass(frozen=True)
+ class ImportLayout:
+     """Define cómo un archivo se convierte en filas de una tabla."""
+@@ -26,6 +35,7 @@ class ImportLayout:
+     roles: tuple
+     max_bytes: int
+     max_rows: int
++    fila_total: FilaTotal | None = None
+ 
+ 
+ AVASA_CONTRATOS = ImportLayout(
+@@ -43,12 +53,31 @@ AVASA_CONTRATOS = ImportLayout(
+     roles=(config.ADMIN, config.SUPERVISOR),
+     max_bytes=5 * 1024 * 1024,
+     max_rows=20_000,
++    fila_total=FilaTotal("Número de Siniestro o Folio", "REPORT TOTAL",
++                         ("dias_renta", "total_contrato", "voucher_total")),
+ )
+ 
+ 
+ LLAVE_RESERVADA = "layouts"
+ 
+ 
++def _validar_fila_total(layout: ImportLayout):
++    fila_total = layout.fila_total
++    if fila_total is None:
++        return
++    if fila_total.header not in {c.header for c in layout.columns}:
++        raise ValueError(
++            f"Layout '{layout.key}': fila_total.header '{fila_total.header}' no es una columna"
++        )
++    numericos = {c.field for c in layout.columns if c.kind in ("decimal", "int")}
++    for campo in fila_total.campos:
++        if campo not in numericos:
++            raise ValueError(
++                f"Layout '{layout.key}': fila_total.campos '{campo}' debe ser una columna "
++                f"decimal o int"
++            )
++
++
+ def _registrar(*layouts: ImportLayout) -> dict:
+     registro = {}
+     for layout in layouts:
+@@ -66,6 +95,7 @@ def _registrar(*layouts: ImportLayout) -> dict:
+                 f"Layout '{layout.key}': upsert_key '{layout.upsert_key}' debe ser una "
+                 f"columna obligatoria"
+             )
++        _validar_fila_total(layout)
+         registro[layout.key] = layout
+     return registro
+ 
+diff --git a/apiserver/ix/apps/importador/validators.py b/apiserver/ix/apps/importador/validators.py
+index 9d0ebf3f..6348d339 100644
+--- a/apiserver/ix/apps/importador/validators.py
++++ b/apiserver/ix/apps/importador/validators.py
+@@ -5,8 +5,9 @@ from sqlalchemy import Numeric
+ 
+ from ix.apps.importador.definitions import (
+     MAX_ERRORES_RESPUESTA, MAX_ORDEN_NUMERO, MSG_COLUMNA_OBLIGATORIA, MSG_COLUMNAS,
+-    MSG_ENTERO, MSG_EXCEDE_CARACTERES, MSG_FECHA, MSG_FORMULA, MSG_LLAVE_DUPLICADA,
+-    MSG_NUMERO, MSG_NUMERO_RANGO, MSG_OBLIGATORIO, PREFIJOS_FORMULA,
++    MSG_ENTERO, MSG_EXCEDE_CARACTERES, MSG_FECHA, MSG_FILA_TOTAL_REPETIDA, MSG_FORMULA,
++    MSG_LLAVE_DUPLICADA, MSG_NUMERO, MSG_NUMERO_RANGO, MSG_OBLIGATORIO, MSG_SIN_FILA_TOTAL,
++    MSG_TOTALES_NO_CUADRAN, PREFIJOS_FORMULA,
+ )
+ from ix.apps.importador.errors import ImportError_, RowError
+ from ix.apps.importador.parsers import normalizar_encabezado
+@@ -110,25 +111,84 @@ def _convertir_fila(layout, indices, numero, valores):
+     return registro, errores
+ 
+ 
++def _columna(layout, header):
++    return next(c for c in layout.columns if c.header == header)
++
++
++def _es_fila_total(layout, indices, valores):
++    fila_total = layout.fila_total
++    if fila_total is None:
++        return False
++    indice = indices.get(_columna(layout, fila_total.header).field)
++    if indice is None or indice >= len(valores) or valores[indice] is None:
++        return False
++    return str(valores[indice]).strip().casefold() == fila_total.marca.strip().casefold()
++
++
++def _leer_totales(layout, indices, numero, valores):
++    """Convierte las celdas de la fila de totales; devuelve totales por campo y errores."""
++    totales, errores = {}, []
++    for columna in layout.columns:
++        if columna.field not in layout.fila_total.campos or columna.field not in indices:
++            continue
++        indice = indices[columna.field]
++        crudo = valores[indice] if indice < len(valores) else None
++        try:
++            if crudo is None or str(crudo).strip() == "":
++                raise ValueError(MSG_OBLIGATORIO)
++            totales[columna.field] = Decimal(CONVERSORES[columna.kind](crudo)).quantize(Decimal("0.01"))
++        except ValueError as e:
++            errores.append(RowError(numero, columna.header, crudo, str(e)))
++    return totales, errores
++
++
++def _verificar_totales(layout, registros, totales):
++    diferencias = []
++    for columna in layout.columns:
++        if columna.field not in totales:
++            continue
++        suma = sum((Decimal(r[columna.field]) for r in registros if r[columna.field] is not None),
++                   Decimal(0)).quantize(Decimal("0.01"))
++        if suma != totales[columna.field]:
++            diferencias.append({"columna": columna.header, "esperado": str(totales[columna.field]),
++                                "calculado": str(suma)})
++    if diferencias:
++        raise ImportError_(MSG_TOTALES_NO_CUADRAN, errores=diferencias)
++
++
+ def validar_filas(layout, indices, filas):
+     """Convierte todas las filas; devuelve registros, hasta 100 errores y el total de errores.
+ 
+     Las llaves se comparan sin distinguir mayúsculas y las vacías no cuentan como duplicadas.
++    Si el layout declara fila de totales, esa fila se aparta de los registros y, cuando no hay
++    errores de fila, sus sumas deben coincidir con las de los registros o se lanza ImportError_.
+     """
+     encabezado_llave = next((c.header for c in layout.columns if c.field == layout.upsert_key), None)
+     if encabezado_llave is None:
+         raise ValueError(f"upsert_key '{layout.upsert_key}' no está en las columnas del layout")
+     registros, errores, total, vistas = [], [], 0, set()
++    totales = None
+     for numero, valores in filas:
+-        registro, errores_fila = _convertir_fila(layout, indices, numero, valores)
+-        llave = registro.get(layout.upsert_key)
+-        if llave is not None:
+-            clave = str(llave).casefold()
+-            if not errores_fila and clave in vistas:
+-                errores_fila.append(RowError(numero, encabezado_llave, llave, MSG_LLAVE_DUPLICADA))
+-            vistas.add(clave)
++        registro = None
++        if _es_fila_total(layout, indices, valores):
++            if totales is None:
++                totales, errores_fila = _leer_totales(layout, indices, numero, valores)
++            else:
++                errores_fila = [RowError(numero, layout.fila_total.header, None, MSG_FILA_TOTAL_REPETIDA)]
++        else:
++            registro, errores_fila = _convertir_fila(layout, indices, numero, valores)
++            llave = registro.get(layout.upsert_key)
++            if llave is not None:
++                clave = str(llave).casefold()
++                if not errores_fila and clave in vistas:
++                    errores_fila.append(RowError(numero, encabezado_llave, llave, MSG_LLAVE_DUPLICADA))
++                vistas.add(clave)
+         total += len(errores_fila)
+         errores.extend(errores_fila[:max(0, MAX_ERRORES_RESPUESTA - len(errores))])
+-        if not errores_fila:
++        if registro is not None and not errores_fila:
+             registros.append(registro)
++    if layout.fila_total is not None and not total:
++        if totales is None:
++            raise ImportError_(MSG_SIN_FILA_TOTAL)
++        _verificar_totales(layout, registros, totales)
+     return registros, errores, total
+diff --git a/apiserver/ix/tests/importador/test_layouts.py b/apiserver/ix/tests/importador/test_layouts.py
+index 6590f1e3..aa569bc0 100644
+--- a/apiserver/ix/tests/importador/test_layouts.py
++++ b/apiserver/ix/tests/importador/test_layouts.py
+@@ -4,6 +4,7 @@ import pytest
+ 
+ from ix.apps.importador.layouts import (
+     LAYOUTS,
++    FilaTotal,
+     ImportColumn,
+     ImportLayout,
+     _registrar,
+@@ -67,3 +68,29 @@ def test_registrar_reserva_la_llave_layouts():
+                                  key="layouts")
+     with pytest.raises(ValueError, match="layouts"):
+         _registrar(layout)
++
++
++def _layout_total(fila_total):
++    columnas = (ImportColumn("Clave", "clave", "text", required=True),
++                ImportColumn("Monto", "monto", "decimal"),
++                ImportColumn("Nota", "nota", "text"))
++    return dataclasses.replace(_layout(columnas), fila_total=fila_total)
++
++
++def test_registrar_acepta_fila_total_valida():
++    layout = _layout_total(FilaTotal("Nota", "TOTAL", ("monto",)))
++    assert _registrar(layout) == {"prueba": layout}
++
++
++def test_registrar_rechaza_fila_total_con_header_inexistente():
++    with pytest.raises(ValueError, match="Otra"):
++        _registrar(_layout_total(FilaTotal("Otra", "TOTAL", ("monto",))))
++
++
++def test_registrar_rechaza_fila_total_con_campo_no_numerico():
++    with pytest.raises(ValueError, match="nota"):
++        _registrar(_layout_total(FilaTotal("Nota", "TOTAL", ("nota",))))
++
++
++def test_layout_avasa_declara_fila_total():
++    assert obtener_layout("avasa_contratos").fila_total.marca == "REPORT TOTAL"
+diff --git a/apiserver/ix/tests/importador/test_services.py b/apiserver/ix/tests/importador/test_services.py
+index 507472a4..bad3631d 100644
+--- a/apiserver/ix/tests/importador/test_services.py
++++ b/apiserver/ix/tests/importador/test_services.py
+@@ -9,7 +9,8 @@ from ix.boletas_informativas.auto_relevo.api.auto_relevo_boleta.auto_relevo_bole
+ )
+ from ix.db.tools import create_session, get_db_url
+ 
+-ENCABEZADO = ["Contract Number", "Numero de Reserva", "Días Renta", "Total del contrato", "Voucher Total"]
++ENCABEZADO = ["Contract Number", "Numero de Reserva", "Días Renta", "Total del contrato", "Voucher Total",
++              "Número de Siniestro o Folio"]
+ USER_ID = 1
+ OTRO_USER_ID = 1535
+ 
+@@ -22,13 +23,18 @@ def session():
+     s.close()
+ 
+ 
++def _con_totales(filas):
++    sumas = [sum(fila[i] for fila in filas) for i in (2, 3, 4)]
++    return [ENCABEZADO, *filas, [None, None, *sumas, "REPORT TOTAL"]]
++
++
+ def _contar(session, prefijo):
+     return session.scalar(select(func.count()).select_from(Modelo)
+                           .where(Modelo.contract_number.like(f"{prefijo}%")))
+ 
+ 
+ def test_carga_y_recarga_idempotente(session, xlsx_bytes):
+-    data = xlsx_bytes([ENCABEZADO, ["ZZT1", "R1", 15, 100, 90], ["ZZT2", None, 7, 50, 0]])
++    data = xlsx_bytes(_con_totales([["ZZT1", "R1", 15, 100, 90, None], ["ZZT2", None, 7, 50, 0, None]]))
+     layout = obtener_layout("avasa_contratos")
+     primera = ImportService.importar(layout, "r.xlsx", data, USER_ID, session, commit=False)
+     segunda = ImportService.importar(layout, "r.xlsx", data, USER_ID, session, commit=False)
+@@ -38,7 +44,7 @@ def test_carga_y_recarga_idempotente(session, xlsx_bytes):
+ 
+ 
+ def test_fila_mala_no_escribe_nada(session, xlsx_bytes):
+-    data = xlsx_bytes([ENCABEZADO, ["ZZT3", "R", 1, 1, 1], ["ZZT4", "R", "x", 1, 1]])
++    data = xlsx_bytes([ENCABEZADO, ["ZZT3", "R", 1, 1, 1, None], ["ZZT4", "R", "x", 1, 1, None]])
+     with pytest.raises(ImportError_) as e:
+         ImportService.importar(obtener_layout("avasa_contratos"), "r.xlsx", data, USER_ID, session, commit=False)
+     assert e.value.errores[0]["fila"] == 3
+@@ -52,7 +58,7 @@ def _fila(session, llave):
+ 
+ 
+ def test_actualizacion_conserva_creador_y_marca_auditoria(session, xlsx_bytes):
+-    data = xlsx_bytes([ENCABEZADO, ["ZZT6", "R", 1, 1, 1]])
++    data = xlsx_bytes(_con_totales([["ZZT6", "R", 1, 1, 1, None]]))
+     layout = obtener_layout("avasa_contratos")
+     ImportService.importar(layout, "r.xlsx", data, USER_ID, session, commit=False)
+     ImportService.importar(layout, "r.xlsx", data, OTRO_USER_ID, session, commit=False)
+@@ -64,17 +70,38 @@ def test_actualizacion_conserva_creador_y_marca_auditoria(session, xlsx_bytes):
+ 
+ def test_llave_insensible_a_mayusculas(session, xlsx_bytes):
+     layout = obtener_layout("avasa_contratos")
+-    ImportService.importar(layout, "r.xlsx", xlsx_bytes([ENCABEZADO, ["ZZT5", "R", 1, 1, 1]]),
++    ImportService.importar(layout, "r.xlsx", xlsx_bytes(_con_totales([["ZZT5", "R", 1, 1, 1, None]])),
+                            USER_ID, session, commit=False)
+-    segunda = ImportService.importar(layout, "r.xlsx", xlsx_bytes([ENCABEZADO, ["zzt5", "R", 1, 1, 1]]),
++    segunda = ImportService.importar(layout, "r.xlsx", xlsx_bytes(_con_totales([["zzt5", "R", 1, 1, 1, None]])),
+                                      USER_ID, session, commit=False)
+     assert (segunda["insertados"], segunda["actualizados"]) == (0, 1)
+     assert _contar(session, "ZZT5") == 1
+ 
+ 
+ def test_mas_filas_que_un_lote(session, xlsx_bytes):
+-    filas = [[f"ZZTB{i:04d}", "R", 1, 1, 1] for i in range(501)]
++    filas = [[f"ZZTB{i:04d}", "R", 1, 1, 1, None] for i in range(501)]
+     resultado = ImportService.importar(obtener_layout("avasa_contratos"), "r.xlsx",
+-                                       xlsx_bytes([ENCABEZADO, *filas]), USER_ID, session, commit=False)
++                                       xlsx_bytes(_con_totales(filas)), USER_ID, session, commit=False)
+     assert resultado["insertados"] == 501
+     assert _contar(session, "ZZTB") == 501
++
++
++def test_reporte_estilo_avasa_con_fila_de_totales(session, xlsx_bytes):
++    filas = [["ZZT7", "R1", 10, 56801820.67000008, 53474699.88, "SIN-1"],
++             ["ZZT8", None, 5, 100, 25.12, None]]
++    totales = [None, None, 15, 56801920.67000008, 53474725.0, "REPORT TOTAL"]
++    data = xlsx_bytes([ENCABEZADO, *filas, totales])
++    resultado = ImportService.importar(obtener_layout("avasa_contratos"), "r.xlsx", data, USER_ID,
++                                       session, commit=False)
++    assert (resultado["total"], resultado["insertados"]) == (2, 2)
++    assert _contar(session, "ZZT") == 2
++
++
++def test_totales_que_no_cuadran_no_escriben_nada(session, xlsx_bytes):
++    filas = [["ZZT9", "R", 1, 1, 1, None]]
++    data = xlsx_bytes([ENCABEZADO, *filas, [None, None, 1, 2, 1, "REPORT TOTAL"]])
++    with pytest.raises(ImportError_) as e:
++        ImportService.importar(obtener_layout("avasa_contratos"), "r.xlsx", data, USER_ID, session, commit=False)
++    assert e.value.status == 400
++    assert e.value.errores == [{"columna": "Total del contrato", "esperado": "2.00", "calculado": "1.00"}]
++    assert _contar(session, "ZZT") == 0
+diff --git a/apiserver/ix/tests/importador/test_validators.py b/apiserver/ix/tests/importador/test_validators.py
+index 981c8863..34ea7180 100644
+--- a/apiserver/ix/tests/importador/test_validators.py
++++ b/apiserver/ix/tests/importador/test_validators.py
+@@ -5,7 +5,8 @@ from decimal import Decimal
+ import pytest
+ 
+ from ix.apps.importador.errors import ImportError_
+-from ix.apps.importador.layouts import ImportColumn, ImportLayout, obtener_layout
++from ix.apps.importador.definitions import MSG_FILA_TOTAL_REPETIDA, MSG_SIN_FILA_TOTAL, MSG_TOTALES_NO_CUADRAN
++from ix.apps.importador.layouts import FilaTotal, ImportColumn, ImportLayout, obtener_layout
+ from ix.apps.importador.validators import mapear_columnas, validar_filas
+ 
+ LAYOUT = ImportLayout(
+@@ -149,8 +150,11 @@ INDICES_AVASA = {"contract_number": 0, "numero_reserva": 1, "dias_renta": 2,
+                  "total_contrato": 3, "voucher_total": 4}
+ 
+ 
++AVASA_SIN_TOTAL = dataclasses.replace(AVASA, fila_total=None)
++
++
+ def _fila_avasa(contrato="C1", reserva=None, dias="1", total="1", voucher="1"):
+-    return validar_filas(AVASA, INDICES_AVASA, [(2, [contrato, reserva, dias, total, voucher])])
++    return validar_filas(AVASA_SIN_TOTAL, INDICES_AVASA, [(2, [contrato, reserva, dias, total, voucher])])
+ 
+ 
+ def test_texto_excede_longitud_de_columna():
+@@ -182,3 +186,72 @@ def test_exponente_enorme_se_rechaza_sin_calcular(valor):
+     assert total == 1 and errores[0].mensaje == "Número fuera de rango"
+     _, errores, total = validar_filas(LAYOUT, INDICES, [(2, ["F1", "1", valor, None])])
+     assert total == 1 and errores[0].columna == "Dias"
++
++
++LAYOUT_TOTAL = ImportLayout(
++    key="prueba", model=None, upsert_key="clave",
++    columns=(
++        ImportColumn("Clave", "clave", "text", required=True),
++        ImportColumn("Monto", "monto", "decimal", required=True),
++        ImportColumn("Dias", "dias", "int"),
++        ImportColumn("Nota", "nota", "text"),
++    ),
++    roles=("admin",), max_bytes=1024, max_rows=100,
++    fila_total=FilaTotal("Nota", "REPORT TOTAL", ("monto", "dias")),
++)
++INDICES_TOTAL = {"clave": 0, "monto": 1, "dias": 2, "nota": 3}
++DATOS_TOTAL = [(2, ["A", "10.50", "1", None]), (3, ["B", "4.50", "2", None])]
++
++
++def _total(monto="15", dias="3", marca="REPORT TOTAL", numero=4):
++    return (numero, [None, monto, dias, marca])
++
++
++def test_fila_de_totales_se_aparta_y_cuadra():
++    registros, errores, total = validar_filas(LAYOUT_TOTAL, INDICES_TOTAL, [*DATOS_TOTAL, _total()])
++    assert [r["clave"] for r in registros] == ["A", "B"]
++    assert errores == [] and total == 0
++
++
++def test_marca_ignora_casing_y_espacios():
++    registros, _, total = validar_filas(
++        LAYOUT_TOTAL, INDICES_TOTAL, [*DATOS_TOTAL, _total(marca="  report total ")])
++    assert len(registros) == 2 and total == 0
++
++
++def test_total_con_ruido_de_punto_flotante_cuadra():
++    registros, _, total = validar_filas(
++        LAYOUT_TOTAL, INDICES_TOTAL, [*DATOS_TOTAL, _total(monto=15.000000000008)])
++    assert len(registros) == 2 and total == 0
++
++
++def test_totales_que_no_cuadran_detalla_columnas():
++    with pytest.raises(ImportError_) as e:
++        validar_filas(LAYOUT_TOTAL, INDICES_TOTAL, [*DATOS_TOTAL, _total(monto="16")])
++    assert e.value.mensaje == MSG_TOTALES_NO_CUADRAN and e.value.status == 400
++    assert e.value.errores == [{"columna": "Monto", "esperado": "16.00", "calculado": "15.00"}]
++
++
++def test_sin_fila_de_totales_es_error_de_archivo():
++    with pytest.raises(ImportError_) as e:
++        validar_filas(LAYOUT_TOTAL, INDICES_TOTAL, DATOS_TOTAL)
++    assert e.value.mensaje == MSG_SIN_FILA_TOTAL and e.value.status == 400
++
++
++def test_fila_de_totales_repetida_es_error_en_la_segunda():
++    _, errores, total = validar_filas(
++        LAYOUT_TOTAL, INDICES_TOTAL, [*DATOS_TOTAL, _total(), _total(numero=5)])
++    assert total == 1
++    assert (errores[0].fila, errores[0].mensaje) == (5, MSG_FILA_TOTAL_REPETIDA)
++
++
++def test_con_errores_de_fila_no_se_comparan_totales():
++    filas = [(2, ["A", "x", "1", None]), _total(monto="999")]
++    _, errores, total = validar_filas(LAYOUT_TOTAL, INDICES_TOTAL, filas)
++    assert total == 1 and errores[0].fila == 2
++
++
++def test_fila_de_totales_no_cuenta_para_duplicados():
++    filas = [*DATOS_TOTAL, (4, ["A", "15", "3", "REPORT TOTAL"])]
++    registros, _, total = validar_filas(LAYOUT_TOTAL, INDICES_TOTAL, filas)
++    assert total == 0 and len(registros) == 2
+-- 
+2.56.0
+

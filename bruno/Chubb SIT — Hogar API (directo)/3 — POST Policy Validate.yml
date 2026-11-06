@@ -1,0 +1,41 @@
+info:
+  name: 3 — POST Policy Validate
+  type: http
+  seq: 4
+
+http:
+  method: POST
+  url: "{{chubbSitBase}}/digital.data.middlewareservicespolicy/Policy/Validate"
+  headers:
+    - name: Content-Type
+      value: application/json
+    - name: App_ID
+      value: "{{appId}}"
+    - name: App_Key
+      value: "{{appKey}}"
+    - name: Resource
+      value: "{{resource}}"
+    - name: apiVersion
+      value: "1"
+  body:
+    type: json
+    data: |-
+      {
+        "PolicyNumber": "{{policyNumber}}"
+      }
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        test('Responde sin 5xx', () => expect(res.getStatus()).to.not.equal(500));
+        const body = res.getBody();
+        console.log('Validate response:', JSON.stringify(body, null, 2));
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

@@ -1,0 +1,24 @@
+meta {
+  name: Foto 1 - otro archivo mismo consecutivo
+  type: http
+  seq: 13
+}
+
+put {
+  url: {{baseUrl}}/v2/ajuste-movil/cases/{{caseId}}/photo-batches/{{batchId}}/photos/1
+  body: multipartForm
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:multipart-form {
+  expected_count: 2
+  file: @file(archivos/foto-2.png)
+}
+
+assert {
+  res.status: eq 409
+}

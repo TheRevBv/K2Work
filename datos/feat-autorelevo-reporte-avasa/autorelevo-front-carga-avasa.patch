@@ -1,0 +1,380 @@
+From 3492b3cd768234bca7c6adff92dad2fe0b30c508 Mon Sep 17 00:00:00 2001
+From: JoshMorinDev <joshua.morinsalazar@chubb.com>
+Date: Wed, 28 Oct 2026 13:57:07 -0600
+Subject: [PATCH] feat(autorelevo): carga del reporte AVASA desde la lista de
+ boletas
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Botón para admin/supervisor que reutiliza upload-file-modal y llama a POST importador/avasa_contratos. Muestra el resumen o los errores por fila. El modal compartido muestra el límite de MB que recibe.
+---
+ .../app-business-services/relevo.service.ts   | 10 +++
+ .../api/relevo/relevo_import.model.ts         | 18 ++++
+ .../relevo-car/list/list.component.html       | 51 +++++++++++
+ .../relevo-car/list/list.component.spec.ts    | 86 +++++++++++++++++++
+ .../relevo-car/list/list.component.ts         | 43 +++++++++-
+ .../upload-file-modal.component.html          |  2 +-
+ admin/src/assets/i18n/en.json                 | 10 ++-
+ admin/src/assets/i18n/es.json                 | 10 ++-
+ 8 files changed, 225 insertions(+), 5 deletions(-)
+ create mode 100644 admin/src/app/app-models/api/relevo/relevo_import.model.ts
+ create mode 100644 admin/src/app/app-modules/relevo-car/list/list.component.spec.ts
+
+diff --git a/admin/src/app/app-business-services/relevo.service.ts b/admin/src/app/app-business-services/relevo.service.ts
+index 470b3614..9de8e106 100644
+--- a/admin/src/app/app-business-services/relevo.service.ts
++++ b/admin/src/app/app-business-services/relevo.service.ts
+@@ -3,6 +3,7 @@ import { map, Observable } from "rxjs";
+ import { GenericPagination } from "../app-api-models/utilities/pagination.model";
+ import { RelevoHelper } from "../app-helpers/relevo.helper";
+ import { RelevoReportModel } from "../app-models/api/relevo/relevo_report.model";
++import { RelevoImportResultModel } from "../app-models/api/relevo/relevo_import.model";
+ import { RelevoTicketFormModel } from "../app-models/api/relevo/relevo_ticket_form.model";
+ import { QueryParamModel } from "../app-models/utilities/query-params.model";
+ import { RestService } from "../app-services";
+@@ -224,6 +225,15 @@ export class RelevoService {
+     }
+ 
+ 
++    public importAvasaReport(file: File): Observable<RelevoImportResultModel> {
++        const formData = new FormData();
++        formData.append('file', file);
++
++        return this.restService.execPostFormData('importador/avasa_contratos', formData).pipe(
++            map((response: any) => response!.data as RelevoImportResultModel)
++        );
++    }
++
+     public getTicketById(ticket_id: number) {
+         return this.restService.execGet(`v1/boleta-informativa/auto-relevo/tickets/${ticket_id}`).pipe(
+             map((response: any) => {
+diff --git a/admin/src/app/app-models/api/relevo/relevo_import.model.ts b/admin/src/app/app-models/api/relevo/relevo_import.model.ts
+new file mode 100644
+index 00000000..3dccf430
+--- /dev/null
++++ b/admin/src/app/app-models/api/relevo/relevo_import.model.ts
+@@ -0,0 +1,18 @@
++export interface RelevoImportResultModel {
++    total: number;
++    insertados: number;
++    actualizados: number;
++}
++
++export interface RelevoImportRowErrorModel {
++    fila: number;
++    columna: string;
++    valor: string;
++    mensaje: string;
++}
++
++export interface RelevoImportErrorModel {
++    detail: string;
++    data: RelevoImportRowErrorModel[];
++    total_errores: number;
++}
+diff --git a/admin/src/app/app-modules/relevo-car/list/list.component.html b/admin/src/app/app-modules/relevo-car/list/list.component.html
+index a4629c64..c6297927 100644
+--- a/admin/src/app/app-modules/relevo-car/list/list.component.html
++++ b/admin/src/app/app-modules/relevo-car/list/list.component.html
+@@ -63,6 +63,16 @@
+         (onClick)="goToReports()"
+         type="button"
+       />
++
++      @if (canImportAvasa) {
++        <p-button
++          label="{{ 'Upload AVASA report' | translate }}"
++          icon="pi pi-upload"
++          styleClass="p-button-rounded p-button-outlined"
++          (onClick)="showUploadModal.set(true)"
++          type="button"
++        />
++      }
+     </div>
+   </div>
+ 
+@@ -501,3 +511,44 @@
+     }
+   </div>
+ </p-dialog>
++
++<app-upload-file-modal
++  [(visible)]="showUploadModal"
++  acceptedFileTypes=".xlsx,.csv"
++  [maxFileSizeMB]="avasaMaxFileSizeMB"
++  (uploadConfirmed)="importAvasaReport($event)"
++/>
++
++@if (importError(); as error) {
++  <p-dialog
++    [visible]="true"
++    (visibleChange)="importError.set(null)"
++    [modal]="true"
++    [style]="{ width: '60vw' }"
++    [draggable]="false"
++    header="{{ 'The AVASA report was not loaded' | translate }}"
++  >
++    <p>{{ error.detail }}</p>
++    <p class="text-secondary">
++      {{ "Showing {{shown}} of {{total}} errors. No rows were saved." | translate: { shown: error.data.length, total: error.total_errores } }}
++    </p>
++    <p-table [value]="error.data" [scrollable]="true" scrollHeight="50vh">
++      <ng-template pTemplate="header">
++        <tr>
++          <th>{{ "Row" | translate }}</th>
++          <th>{{ "Column" | translate }}</th>
++          <th>{{ "Value read" | translate }}</th>
++          <th>{{ "Message" | translate }}</th>
++        </tr>
++      </ng-template>
++      <ng-template pTemplate="body" let-row>
++        <tr>
++          <td>{{ row.fila }}</td>
++          <td>{{ row.columna }}</td>
++          <td>{{ row.valor }}</td>
++          <td>{{ row.mensaje }}</td>
++        </tr>
++      </ng-template>
++    </p-table>
++  </p-dialog>
++}
+diff --git a/admin/src/app/app-modules/relevo-car/list/list.component.spec.ts b/admin/src/app/app-modules/relevo-car/list/list.component.spec.ts
+new file mode 100644
+index 00000000..3d7e66c8
+--- /dev/null
++++ b/admin/src/app/app-modules/relevo-car/list/list.component.spec.ts
+@@ -0,0 +1,86 @@
++import { HttpErrorResponse } from '@angular/common/http';
++import { TestBed } from '@angular/core/testing';
++import { Router } from '@angular/router';
++import { of, throwError } from 'rxjs';
++import { RelevoService } from 'src/app/app-business-services/relevo.service';
++import { MessagesService } from 'src/app/app-services';
++import { RelevoStoreService } from 'src/app/app-store/services/relevo.store.service';
++import { MeService } from 'src/app/services/me.service';
++import { ListComponent } from './list.component';
++
++describe('ListComponent importAvasaReport', () => {
++    let relevoService: jasmine.SpyObj<RelevoService>;
++    let messages: jasmine.SpyObj<MessagesService>;
++
++    function create(roles: string[] = ['admin']): ListComponent {
++        TestBed.configureTestingModule({
++            providers: [
++                { provide: RelevoService, useValue: relevoService },
++                { provide: MessagesService, useValue: messages },
++                { provide: MeService, useValue: { user: { id: 1, roles } } },
++                { provide: RelevoStoreService, useValue: {} },
++                { provide: Router, useValue: {} },
++            ],
++        });
++        return TestBed.runInInjectionContext(() => new ListComponent());
++    }
++
++    function failWith(status: number, error: any) {
++        relevoService.importAvasaReport.and.returnValue(throwError(() => new HttpErrorResponse({ status, error })));
++    }
++
++    const file = new File(['x'], 'avasa.xlsx');
++
++    beforeEach(() => {
++        relevoService = jasmine.createSpyObj('RelevoService', ['importAvasaReport']);
++        messages = jasmine.createSpyObj('MessagesService', [
++            'firePreloader', 'hidePreloader', 'fireSuccessMessage', 'fireErrorMessage',
++        ]);
++    });
++
++    it('muestra el botón solo a admin o supervisor', () => {
++        expect(create(['supervisor']).canImportAvasa).toBeTrue();
++        TestBed.resetTestingModule();
++        expect(create(['operator']).canImportAvasa).toBeFalse();
++    });
++
++    it('muestra el resumen cuando la carga es exitosa', () => {
++        relevoService.importAvasaReport.and.returnValue(of({ total: 3, insertados: 1, actualizados: 2 }));
++        const component = create();
++
++        component.importAvasaReport(file);
++
++        expect(messages.fireSuccessMessage).toHaveBeenCalledWith('3 contratos · 1 nuevos · 2 actualizados', 3);
++        expect(component.importError()).toBeNull();
++    });
++
++    it('abre el diálogo con los errores por fila', () => {
++        const data = [{ fila: 2, columna: 'Días Renta', valor: 'abc', mensaje: 'No es número' }];
++        failWith(400, { error: { detail: 'El archivo tiene errores', data, total_errores: 7 } });
++        const component = create();
++
++        component.importAvasaReport(file);
++
++        expect(component.importError()).toEqual({ detail: 'El archivo tiene errores', data, total_errores: 7 });
++        expect(messages.hidePreloader).toHaveBeenCalled();
++        expect(messages.fireErrorMessage).not.toHaveBeenCalled();
++    });
++
++    it('muestra el detail cuando no hay errores por fila', () => {
++        failWith(413, { error: { detail: 'El archivo excede el tamaño', data: [] } });
++        const component = create();
++
++        component.importAvasaReport(file);
++
++        expect(messages.fireErrorMessage).toHaveBeenCalledWith('Error al cargar el reporte', 'El archivo excede el tamaño');
++        expect(component.importError()).toBeNull();
++    });
++
++    it('muestra el mensaje en texto del 403', () => {
++        failWith(403, { error: 'Forbidden' });
++
++        create().importAvasaReport(file);
++
++        expect(messages.fireErrorMessage).toHaveBeenCalledWith('Error al cargar el reporte', 'Forbidden');
++    });
++});
+diff --git a/admin/src/app/app-modules/relevo-car/list/list.component.ts b/admin/src/app/app-modules/relevo-car/list/list.component.ts
+index 2bcc7aac..5d520318 100644
+--- a/admin/src/app/app-modules/relevo-car/list/list.component.ts
++++ b/admin/src/app/app-modules/relevo-car/list/list.component.ts
+@@ -1,4 +1,4 @@
+-import { Component, OnDestroy, OnInit, inject } from '@angular/core';
++import { Component, OnDestroy, OnInit, inject, signal } from '@angular/core';
+ import { FormBuilder, FormGroup, ReactiveFormsModule } from '@angular/forms';
+ import { Router } from '@angular/router';
+ import { debounceTime, Subscription } from 'rxjs';
+@@ -20,6 +20,13 @@ import { PaginatorModule } from 'primeng/paginator';
+ import { TableModule } from 'primeng/table';
+ import { FormatLocalDate } from 'src/app/app-pipes/format-local-date.pipe';
+ import { HiddenTextPipe } from 'src/app/app-pipes/hidden-text.pipe';
++import { HttpErrorResponse } from '@angular/common/http';
++import { RelevoService } from 'src/app/app-business-services/relevo.service';
++import { RelevoImportErrorModel } from 'src/app/app-models/api/relevo/relevo_import.model';
++import { UploadFileModalComponent } from 'src/app/components/upload-file-modal/upload-file-modal.component';
++
++/** Mismos roles que el layout `avasa_contratos` del apiserver. */
++const AVASA_IMPORT_ROLES = ['admin', 'supervisor'];
+ 
+ 
+ @Component({
+@@ -38,6 +45,7 @@ import { HiddenTextPipe } from 'src/app/app-pipes/hidden-text.pipe';
+         DatePipe,
+         HiddenTextPipe,
+         FormatLocalDate,
++        UploadFileModalComponent,
+       ],
+ })
+ export class ListComponent implements OnInit, OnDestroy {
+@@ -46,6 +54,7 @@ export class ListComponent implements OnInit, OnDestroy {
+     private readonly formBuilder = inject(FormBuilder);
+     private readonly messageService = inject(MessagesService);
+     private readonly me = inject(MeService);
++    private readonly relevoService = inject(RelevoService);
+ 
+     
+     subscriptions: Subscription[] = [];
+@@ -59,6 +68,11 @@ export class ListComponent implements OnInit, OnDestroy {
+     detailTicket: RelevoTicketFormModel;
+     showOwnerData: boolean = false;
+ 
++    readonly avasaMaxFileSizeMB = 5;
++    readonly canImportAvasa = AVASA_IMPORT_ROLES.some(role => this.me.user?.roles?.includes(role));
++    readonly showUploadModal = signal(false);
++    readonly importError = signal<RelevoImportErrorModel | null>(null);
++
+     private user: User;
+ 
+     ngOnInit(): void {
+@@ -148,6 +162,33 @@ export class ListComponent implements OnInit, OnDestroy {
+         this.router.navigate(['/admin/relevo-car/reports']);
+     }
+ 
++    importAvasaReport(file: File) {
++        this.messageService.firePreloader();
++        this.relevoService.importAvasaReport(file).subscribe({
++            next: ({ total, insertados, actualizados }) => this.messageService.fireSuccessMessage(
++                `${total} contratos · ${insertados} nuevos · ${actualizados} actualizados`, 3
++            ),
++            error: (err: HttpErrorResponse) => this.showImportError(err.error?.error),
++        });
++    }
++
++    /** El backend responde `{error: {detail, data, total_errores}}` o `{error: "mensaje"}` (403). */
++    private showImportError(error: any) {
++        if (error?.data?.length) {
++            this.messageService.hidePreloader();
++            this.importError.set({
++                detail: error.detail,
++                data: error.data,
++                total_errores: error.total_errores ?? error.data.length,
++            });
++            return;
++        }
++        this.messageService.fireErrorMessage(
++            'Error al cargar el reporte',
++            error?.detail ?? (typeof error === 'string' ? error : 'Intenta de nuevo más tarde')
++        );
++    }
++
+     unmaskOwnerData() {
+         this.showOwnerData = !this.showOwnerData
+         if(this.showOwnerData) {
+diff --git a/admin/src/app/components/upload-file-modal/upload-file-modal.component.html b/admin/src/app/components/upload-file-modal/upload-file-modal.component.html
+index 198c08f0..eaae807c 100644
+--- a/admin/src/app/components/upload-file-modal/upload-file-modal.component.html
++++ b/admin/src/app/components/upload-file-modal/upload-file-modal.component.html
+@@ -53,7 +53,7 @@
+             [customUpload]="true">
+           </p-fileUpload>
+           <p class="text-sm text-color-secondary mt-3 d-flex justify-content-center align-items-center">
+-            {{ "Max 10 MB files are allowed" | translate}}
++            {{ "Max {{size}} MB files are allowed" | translate: { size: maxFileSizeMB() } }}
+           </p>
+         </div>
+       </div>
+diff --git a/admin/src/assets/i18n/en.json b/admin/src/assets/i18n/en.json
+index 039e32e9..e6b592e3 100755
+--- a/admin/src/assets/i18n/en.json
++++ b/admin/src/assets/i18n/en.json
+@@ -421,5 +421,13 @@
+     "REPORTS_COLUMN_ERROR": "Error",
+     "REPORTS_COLUMN_ACTIONS": "Actions",
+     "REPORTS_GENERATING": "Generating...",
+-    "REPORTS_NO_ERROR": "No error"
++    "REPORTS_NO_ERROR": "No error",
++    "Max {{size}} MB files are allowed": "Max {{size}} MB files are allowed",
++    "Upload AVASA report": "Upload AVASA report",
++    "The AVASA report was not loaded": "The AVASA report was not loaded",
++    "Showing {{shown}} of {{total}} errors. No rows were saved.": "Showing {{shown}} of {{total}} errors. No rows were saved.",
++    "Row": "Row",
++    "Value read": "Value read",
++    "Message": "Message",
++    "Column": "Column"
+ }
+diff --git a/admin/src/assets/i18n/es.json b/admin/src/assets/i18n/es.json
+index a2627618..78159b05 100755
+--- a/admin/src/assets/i18n/es.json
++++ b/admin/src/assets/i18n/es.json
+@@ -3246,7 +3246,6 @@
+     "Sign of Claim Settlement document": "Firma del documento carta finiquito",
+     "Media Upload": "Subir archivo",
+     "Add your documents here, and you can upload up to 1 files max": "Agrega tu documento aquí, puedes subir 1 archivo máximo",
+-    "Max 10 MB files are allowed": "Archivos de máximo 10 MB son permitidos",
+     "Only support .pdf": "Sólo archivos .pdf",
+     "Claim Settlement Signed": "Carta Finiquito Firmada",
+     "It was not possible to send the notification.": "No fue posible enviar notificación.",
+@@ -3537,5 +3536,12 @@
+     "Question deleted":"Pregunta eliminada",
+     "The number of days in the selected range is":"Días en el rango seleccionado",
+     "Are you sure you want to delete this VIP client?":"¿Estás seguro de que desea eliminar este cliente VIP?",
+-    "Please validate the following information": "Por favor valida la siguiente información"
++    "Please validate the following information": "Por favor valida la siguiente información",
++    "Max {{size}} MB files are allowed": "Archivos de máximo {{size}} MB son permitidos",
++    "Upload AVASA report": "Cargar reporte AVASA",
++    "The AVASA report was not loaded": "El reporte AVASA no se cargó",
++    "Showing {{shown}} of {{total}} errors. No rows were saved.": "Mostrando {{shown}} de {{total}} errores. No se guardó ninguna fila.",
++    "Row": "Fila",
++    "Value read": "Valor leído",
++    "Message": "Mensaje"
+ }
+-- 
+2.56.0
+

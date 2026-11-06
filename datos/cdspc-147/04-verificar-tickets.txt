@@ -1,0 +1,13 @@
++---------+---------+-------------+--------------+---------------------+-------------------------------------------------------------------------------------+
+| case_id | id      | ticket_type | program_type | created_time        | comment                                                                             |
++---------+---------+-------------+--------------+---------------------+-------------------------------------------------------------------------------------+
+|   67607 | 1017331 |          17 |         NULL | 2026-10-19 22:03:10 | Boleta creada por chat joshua.morinsalazar@chubb.com                                |
+|   67607 | 1017332 |           1 |         NULL | 2026-10-19 22:03:10 | QA CDSPC-147 Grua programada                                                        |
+|   67607 | 1017333 |          11 |           10 | 2026-10-20 16:00:00 | Programado: 20-10-2026 16:00                                                        |
+|   67608 | 1017334 |          17 |         NULL | 2026-10-19 22:05:49 | Boleta creada por chat joshua.morinsalazar@chubb.com                                |
+|   67608 | 1017335 |           1 |         NULL | 2026-10-19 22:05:50 | QA CDSPC-147 Grua SI sin fecha                                                      |
+|   67608 | 1017336 |           9 |         NULL | 2026-10-19 22:05:57 | Respuesta Qonect: No existen gruas que cumplan con el tiempo de calidad establecido |
+|   67609 | 1017337 |          17 |         NULL | 2026-10-19 22:06:46 | Boleta creada por chat joshua.morinsalazar@chubb.com                                |
+|   67609 | 1017338 |           1 |         NULL | 2026-10-19 22:06:47 | QA CDSPC-147 Grua no programada                                                     |
+|   67609 | 1017339 |           9 |         NULL | 2026-10-19 22:06:53 | Respuesta Qonect: No existen gruas que cumplan con el tiempo de calidad establecido |
++---------+---------+-------------+--------------+---------------------+-------------------------------------------------------------------------------------+

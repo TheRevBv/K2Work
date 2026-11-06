@@ -1,0 +1,24 @@
+meta {
+  name: Foto - batchId no UUID
+  type: http
+  seq: 10
+}
+
+put {
+  url: {{baseUrl}}/v2/ajuste-movil/cases/{{caseId}}/photo-batches/123/photos/1
+  body: multipartForm
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:multipart-form {
+  file: @file(archivos/foto-1.jpg)
+  expected_count: 2
+}
+
+assert {
+  res.status: eq 400
+}

@@ -1,0 +1,32 @@
+info:
+  name: "Login sin rol"
+  type: http
+  seq: 1
+
+http:
+  method: POST
+  url: "{{baseUrl}}/api/auth/token"
+  headers:
+    - name: "Content-Type"
+      value: "application/json"
+  body:
+    type: json
+    data: |-
+      {
+        "email": "{{process.env.K2_USER_SIN_ROL}}",
+        "password": "{{process.env.K2_PASS_SIN_ROL}}"
+      }
+  auth: none
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        if (res.getStatus() === 200) { bru.setVar('token_sin_rol', res.getBody().token); }
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false
