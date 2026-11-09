@@ -1,0 +1,15 @@
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
+index 5c90f50f..c71b1175 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
+@@ -340,7 +340,9 @@ class AutoRelevoService:
+ 
+             self._update_related_entities(data_manager, servicio, payload)
+             boleta_data = payload.get("boleta_informativa") if payload else None
+-            if isinstance(boleta_data, dict) and isinstance(boleta_data.get("evaluador_aprobo_servicio"), bool):
++            # El admin reenvía la decisión en cada guardado; solo se aplica cuando cambia.
++            if (isinstance(boleta_data, dict) and isinstance(boleta_data.get("evaluador_aprobo_servicio"), bool)
++                    and boleta_data["evaluador_aprobo_servicio"] != aprobado_previo):
+                 comentario = (boleta_data.get("motivo_evaluacion_servicio") or "").strip()
+                 self._aplicar_autorizacion_servicio(
+                     ticket_id, servicio, boleta_data["evaluador_aprobo_servicio"], comentario, aprobado_previo

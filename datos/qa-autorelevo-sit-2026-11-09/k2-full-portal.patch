@@ -1,0 +1,446 @@
+diff --git a/admin/src/app/app-modules/relevo-car/authorization-data-form/authorization-data-form.component.ts b/admin/src/app/app-modules/relevo-car/authorization-data-form/authorization-data-form.component.ts
+index 6997d6c4..2ff2aff4 100644
+--- a/admin/src/app/app-modules/relevo-car/authorization-data-form/authorization-data-form.component.ts
++++ b/admin/src/app/app-modules/relevo-car/authorization-data-form/authorization-data-form.component.ts
+@@ -38,6 +38,8 @@ export class AuthorizationDataFormComponent implements OnInit, OnDestroy {
+             this.relevoStoreService.getRelevoCreatedTicketObserbable().subscribe(result => {
+ 
+                 this.createdTicket = result;
++                // El ticket puede llegar después de initForm (entrada desde la lista).
++                if (this.actionForm?.pristine) this.actionForm.patchValue(this.valoresTicket(), { emitEvent: false });
+ 
+ 
+             })
+@@ -85,15 +87,27 @@ export class AuthorizationDataFormComponent implements OnInit, OnDestroy {
+     }
+ 
+ 
++    private valoresTicket() {
++        const boleta = this.createdTicket?.BoletaInformativa;
++        return {
++            sinister_authorization_date: DateTimeTools.getDateTimeRequestFormat(boleta?.fecha_autorizacion_siniestro, false),
++            valuation_authorization_date: boleta?.tiempo_autorizacion_valuacion,
++            assignment_date: DateTimeTools.getDateTimeRequestFormat(boleta?.fecha_asignacion_auto, false),
++            authorization_time: boleta?.tiempo_asignacion,
++            evaluator_approved: boleta?.evaluador_aprobo_servicio,
++            rejection_reason: boleta?.motivo_evaluacion_servicio ?? '',
++        };
++    }
++
+     initForm() {
++        const v = this.valoresTicket();
+         this.actionForm = this.formBuilder.group({
+-            sinister_authorization_date: [DateTimeTools.getDateTimeRequestFormat(this.createdTicket?.BoletaInformativa?.fecha_autorizacion_siniestro, false), Validators.required],
+-            valuation_authorization_date: [this.createdTicket?.BoletaInformativa?.tiempo_autorizacion_valuacion, Validators.required],
+-            assignment_date: [DateTimeTools.getDateTimeRequestFormat(this.createdTicket?.BoletaInformativa?.fecha_asignacion_auto, false), Validators.required],
+-            authorization_time: [this.createdTicket?.BoletaInformativa?.tiempo_asignacion, Validators.required],
+-            evaluator_approved: [this.createdTicket?.BoletaInformativa?.evaluador_aprobo_servicio, Validators.required],
+-            rejection_reason: [this.createdTicket?.BoletaInformativa?.motivo_evaluacion_servicio ?? '']
+-
++            sinister_authorization_date: [v.sinister_authorization_date, Validators.required],
++            valuation_authorization_date: [v.valuation_authorization_date, Validators.required],
++            assignment_date: [v.assignment_date, Validators.required],
++            authorization_time: [v.authorization_time, Validators.required],
++            evaluator_approved: [v.evaluator_approved, Validators.required],
++            rejection_reason: [v.rejection_reason]
+         });
+     }
+ 
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
+index 5c90f50f..2cc2b1c6 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
+@@ -28,7 +28,6 @@ ERROR_NO_RESULTS = "Sin resultados"
+ ERROR_DUPLICATE = "Duplicado"
+ ERROR_INVALID = "Datos inválidos"
+ 
+-DATE_TODAY = datetime.now(timezone.utc)
+ 
+ # Campos de vigencia de Chubb, confirmados en la busqueda por poliza y por siniestro (formato 12/Oct/2027).
+ VIGENCIA_INICIO_KEYS = ("InicioVigencia", "FechaInicioVigencia")
+@@ -340,7 +339,9 @@ class AutoRelevoService:
+ 
+             self._update_related_entities(data_manager, servicio, payload)
+             boleta_data = payload.get("boleta_informativa") if payload else None
+-            if isinstance(boleta_data, dict) and isinstance(boleta_data.get("evaluador_aprobo_servicio"), bool):
++            # El admin reenvía la decisión en cada guardado; solo se aplica cuando cambia.
++            if (isinstance(boleta_data, dict) and isinstance(boleta_data.get("evaluador_aprobo_servicio"), bool)
++                    and boleta_data["evaluador_aprobo_servicio"] != aprobado_previo):
+                 comentario = (boleta_data.get("motivo_evaluacion_servicio") or "").strip()
+                 self._aplicar_autorizacion_servicio(
+                     ticket_id, servicio, boleta_data["evaluador_aprobo_servicio"], comentario, aprobado_previo
+@@ -430,7 +431,7 @@ class AutoRelevoService:
+             servicio.razon_estatus = payload.get("motivo_cierre", "Cierre de folio registrado.")
+             self._sync_event_status(servicio)
+             servicio.audit_updated_by = g.current_user.id
+-            servicio.audit_updated_at = DATE_TODAY
++            servicio.audit_updated_at = datetime.now(timezone.utc)
+             g.s().commit()
+ 
+             costos_dict = {
+@@ -523,7 +524,7 @@ class AutoRelevoService:
+                 motivo.descripcion = payload["descripcion"]
+ 
+             motivo.audit_updated_by = g.current_user.id
+-            motivo.audit_updated_at = DATE_TODAY
++            motivo.audit_updated_at = datetime.now(timezone.utc)
+             g.s().add(motivo)
+             g.s().commit()
+ 
+@@ -543,7 +544,7 @@ class AutoRelevoService:
+ 
+             motivo.active_record = False
+             motivo.audit_deleted_by = g.current_user.id
+-            motivo.audit_deleted_at = DATE_TODAY
++            motivo.audit_deleted_at = datetime.now(timezone.utc)
+             g.s().commit()
+ 
+             return {
+@@ -1092,7 +1093,7 @@ class AutoRelevoService:
+                 autorelevo_payload[key] = extra_data[key]
+ 
+         # Actualiza autorelevo
+-        autorelevo.audit_updated_at = DATE_TODAY
++        autorelevo.audit_updated_at = datetime.now(timezone.utc)
+         autorelevo.audit_updated_by = g.current_user.id
+ 
+         g.s().add(autorelevo)
+@@ -1134,8 +1135,9 @@ class AutoRelevoService:
+     def registrar_autorizacion(self, ticket_id, payload):
+         """Registra el resultado de la autorización (aprobado / no aprobado) de un servicio.
+ 
+-        Solo se permite cuando la documentación está completa. `comentario` se guarda
+-        en `razon_estatus` y es obligatorio si no se aprueba.
++        Solo se permite cuando la documentación está completa. `comentario` es obligatorio
++        si no se aprueba y entonces se guarda en `razon_estatus`; al aprobar, `razon_estatus`
++        conserva el nombre del motivo.
+         """
+         aprobado = payload.get("aprobado") if payload else None
+         comentario = (payload.get("comentario") or "").strip() if payload else ""
+@@ -1174,15 +1176,19 @@ class AutoRelevoService:
+             nuevo = EstatusServicioEnum.SERVICIO_AUTORIZADO if aprobado else EstatusServicioEnum.NO_AUTORIZADO
+             AutoRelevoDataManager(g.s()).update_status_servicio_auto_relevo(ticket_id, nuevo.value)
+ 
+-        servicio.razon_estatus = comentario if comentario else None
+-        servicio.audit_updated_at = DATE_TODAY
++        boleta = servicio.boleta_informativa
++        # razon_estatus es el motivo del servicio para el admin y el motivo de rechazo para el micrositio.
++        if aprobado:
++            servicio.razon_estatus = self._nombre_motivo(boleta.motivo_servicio_id) if boleta else servicio.razon_estatus
++        else:
++            servicio.razon_estatus = comentario or None
++        servicio.audit_updated_at = datetime.now(timezone.utc)
+         servicio.audit_updated_by = g.current_user.id
+         g.s().add(servicio)
+ 
+-        boleta = servicio.boleta_informativa
+         if boleta:
+             boleta.evaluador_aprobo_servicio = aprobado
+             boleta.motivo_evaluacion_servicio = comentario if comentario else None
+-            boleta.audit_updated_at = DATE_TODAY
++            boleta.audit_updated_at = datetime.now(timezone.utc)
+             boleta.audit_updated_by = g.current_user.id
+             g.s().add(boleta)
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_data_manager.py b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_data_manager.py
+index 901f68a7..b84f5405 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_data_manager.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_data_manager.py
+@@ -50,7 +50,7 @@ class AutoRelevoDataManager:
+             poliza=sinister_data.get("policy_number"),
+             prefijo=sinister_data.get("policy_key"),
+             sponsor=payload.get("sponsor", ""),    
+-            audit_created_at=Constants.DATE_TODAY,
++            audit_created_at=datetime.now(timezone.utc),
+             audit_created_by=g.current_user.id,
+             product_id = payload.get("product_id"),
+             plan_id = payload.get("plan_id"),
+@@ -67,7 +67,7 @@ class AutoRelevoDataManager:
+ 
+         self.validate_integer_field("tiempo_autorizacion_valuacion", boleta_data.get(Constants.AUTH_TIME))
+         self.validate_integer_field("tiempo_asignacion", boleta_data.get(Constants.ASSIGNMENT_TIME))
+-        fecha_solicitud = self.convert_iso_to_mysql(boleta_data.get("fecha_solicitud")) or Constants.DATE_TODAY
++        fecha_solicitud = self.convert_iso_to_mysql(boleta_data.get("fecha_solicitud")) or datetime.now(timezone.utc)
+         
+         boleta = BoletaInformativa(
+             siniestro_id=siniestro_id,
+@@ -84,7 +84,7 @@ class AutoRelevoDataManager:
+             tiempo_asignacion=boleta_data.get(Constants.ASSIGNMENT_TIME, 0),
+             motivo_activacion_servicio=boleta_data.get("motivo_activacion_servicio"),
+             motivo_servicio_id=boleta_data.get("motivo_servicio_id"),
+-            audit_created_at=Constants.DATE_TODAY,
++            audit_created_at=datetime.now(timezone.utc),
+             audit_created_by=g.current_user.id
+         )
+         self.session.add(boleta)
+@@ -98,7 +98,7 @@ class AutoRelevoDataManager:
+                 nombre_completo=datos_titular_data.get(Constants.FULL_NAME, "Pendiente"),
+                 telefono_contacto=datos_titular_data.get(Constants.PHONE_CONTACT, "Pendiente"),
+                 correo_electronico=datos_titular_data.get(Constants.MAIL_CONTACT, "Pendiente"),
+-                audit_created_at=Constants.DATE_TODAY,
++                audit_created_at=datetime.now(timezone.utc),
+                 audit_created_by=g.current_user.id
+             )
+         else:
+@@ -106,7 +106,7 @@ class AutoRelevoDataManager:
+                 nombre_completo="Pendiente",
+                 telefono_contacto="Pendiente",
+                 correo_electronico="Pendiente",
+-                audit_created_at=Constants.DATE_TODAY,
++                audit_created_at=datetime.now(timezone.utc),
+                 audit_created_by=g.current_user.id
+             )
+         self.session.add(titular)
+@@ -121,7 +121,7 @@ class AutoRelevoDataManager:
+                 estado=ubicacion_data.get(Constants.STATE, "Pendiente"),
+                 municipio=ubicacion_data.get(Constants.CITY, "Pendiente"),
+                 codigo_postal=ubicacion_data.get(Constants.ZIP_CODE, "Pendiente"),
+-                audit_created_at=Constants.DATE_TODAY,
++                audit_created_at=datetime.now(timezone.utc),
+                 audit_created_by=g.current_user.id
+             )
+         else:
+@@ -130,7 +130,7 @@ class AutoRelevoDataManager:
+                 estado="Pendiente",
+                 municipio="Pendiente",
+                 codigo_postal="Pendiente",
+-                audit_created_at=Constants.DATE_TODAY,
++                audit_created_at=datetime.now(timezone.utc),
+                 audit_created_by=g.current_user.id
+             )
+         self.session.add(ubicacion)
+@@ -149,7 +149,7 @@ class AutoRelevoDataManager:
+             **{
+                 "grupo_vehiculo_id": vehiculo_data.get(Constants.GROUP_VEHICLE_ID)  
+             },
+-            audit_created_at=Constants.DATE_TODAY,
++            audit_created_at=datetime.now(timezone.utc),
+             audit_created_by=g.current_user.id
+         )
+         self.session.add(vehiculo)
+@@ -176,7 +176,7 @@ class AutoRelevoDataManager:
+                 servicio_id=servicio_id,
+                 documento_requerido_id=doc.id,
+                 estatus_validacion="Pendiente",
+-                audit_created_at=Constants.DATE_TODAY,
++                audit_created_at=datetime.now(timezone.utc),
+                 audit_created_by=g.current_user.id
+             )
+             self.session.add(validacion)
+@@ -191,7 +191,7 @@ class AutoRelevoDataManager:
+             tipo_servicio_id=tipo_servicio_id,
+             estatus_servicio=EstatusServicioEnum.EN_REVISION,
+             razon_estatus=payload.get("razon_estatus") if payload else None,
+-            audit_created_at=Constants.DATE_TODAY,
++            audit_created_at=datetime.now(timezone.utc),
+             audit_created_by=g.current_user.id
+         )
+         self.session.add(servicio)
+@@ -205,7 +205,7 @@ class AutoRelevoDataManager:
+             if item in payload and payload[item] is not None:
+                 setattr(servicio, item, payload[item]) 
+         
+-        servicio.audit_updated_at = Constants.DATE_TODAY
++        servicio.audit_updated_at = datetime.now(timezone.utc)
+         servicio.audit_updated_by = g.current_user.id
+         self.session.add(servicio)
+     
+@@ -228,7 +228,7 @@ class AutoRelevoDataManager:
+                 boleta.motivo_activacion_servicio = None
+         
+         # Actualizar en el definitions.py los nuevos campos de boleta
+-        boleta.audit_updated_at = Constants.DATE_TODAY
++        boleta.audit_updated_at = datetime.now(timezone.utc)
+         boleta.audit_updated_by = g.current_user.id
+         self.session.add(boleta)
+ 
+@@ -238,7 +238,7 @@ class AutoRelevoDataManager:
+             if item in datos_titular_data and datos_titular_data[item] is not None:
+                 setattr(titular, item, datos_titular_data[item])
+                 
+-        titular.audit_updated_at = Constants.DATE_TODAY
++        titular.audit_updated_at = datetime.now(timezone.utc)
+         titular.audit_updated_by = g.current_user.id
+         self.session.add(titular)
+ 
+@@ -247,7 +247,7 @@ class AutoRelevoDataManager:
+         for item in Constants.FIELDS_LOCATION:
+             if item in ubicacion_data and ubicacion_data[item] is not None:
+                 setattr(ubicacion, item, ubicacion_data[item])
+-        ubicacion.audit_updated_at = Constants.DATE_TODAY
++        ubicacion.audit_updated_at = datetime.now(timezone.utc)
+         ubicacion.audit_updated_by = g.current_user.id
+         self.session.add(ubicacion)
+ 
+@@ -257,7 +257,7 @@ class AutoRelevoDataManager:
+             if item in vehiculo_data and vehiculo_data[item] is not None:
+                 setattr(vehiculo, item, vehiculo_data[item])
+                 
+-        vehiculo.audit_updated_at = Constants.DATE_TODAY
++        vehiculo.audit_updated_at = datetime.now(timezone.utc)
+         vehiculo.audit_updated_by = g.current_user.id
+         self.session.add(vehiculo)
+ 
+@@ -267,7 +267,7 @@ class AutoRelevoDataManager:
+         if "comentario_validacion" in validacion_data and validacion_data["comentario_validacion"] is not None:
+             validacion.comentario_validacion = validacion_data["comentario_validacion"]
+         
+-        validacion.audit_updated_at = Constants.DATE_TODAY
++        validacion.audit_updated_at = datetime.now(timezone.utc)
+         validacion.audit_updated_by = g.current_user.id
+         self.session.add(validacion)
+ 
+@@ -278,7 +278,7 @@ class AutoRelevoDataManager:
+             servicio = self.session.query(ServicioAutoRelevo).get(servicio_id)
+             if servicio and servicio.boleta_informativa:
+                 servicio.boleta_informativa.fecha_recepcion_documentos = fecha_aprobados
+-                servicio.boleta_informativa.audit_updated_at = Constants.DATE_TODAY
++                servicio.boleta_informativa.audit_updated_at = datetime.now(timezone.utc)
+                 servicio.boleta_informativa.audit_updated_by = g.current_user.id
+                 self.session.add(servicio.boleta_informativa)
+ 
+@@ -301,7 +301,7 @@ class AutoRelevoDataManager:
+             taxes=payload.get("taxes"),
+             subtotal=payload.get("subtotal"),
+             costo_total_servicio=payload["costo_total_servicio"],
+-            audit_created_at=Constants.DATE_TODAY,
++            audit_created_at=datetime.now(timezone.utc),
+             audit_created_by=g.current_user.id,
+         )
+ 
+@@ -502,7 +502,7 @@ class AutoRelevoDataManager:
+                 raise errors.ApiError(Constants.SERVICE_NOT_FOUND, 404)
+ 
+             servicio.estatus_servicio = nuevo_estatus
+-            servicio.audit_updated_at = Constants.DATE_TODAY
++            servicio.audit_updated_at = datetime.now(timezone.utc)
+             servicio.audit_updated_by = usuario_id or g.current_user.id
+             
+             self.session.add(servicio)
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_events_manager.py b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_events_manager.py
+index 10efd333..22a3e087 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_events_manager.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_events_manager.py
+@@ -1,4 +1,4 @@
+-from datetime import date, datetime, timedelta
++from datetime import date, datetime, timedelta, timezone
+ from flask import g
+ from ix.api import errors
+ from ix.boletas_informativas.auto_relevo.api.auto_relevo_boleta.auto_relevo_boleta_models import (
+@@ -75,7 +75,7 @@ class AutoRelevoEventsManager:
+                 vigencia_inicio=inicio, vigencia_fin=vigencia_fin,
+                 eventos_total=Constants.DEFAULT_EVENTS_TOTAL, eventos_usados=0,
+                 eventos_restantes=Constants.DEFAULT_EVENTS_TOTAL,
+-                audit_created_at=Constants.DATE_TODAY, audit_created_by=g.current_user.id,
++                audit_created_at=datetime.now(timezone.utc), audit_created_by=g.current_user.id,
+             )
+             self.session.add(count)
+             self.session.flush()
+@@ -101,7 +101,7 @@ class AutoRelevoEventsManager:
+             autorelevo_sinister_id=autorelevo_sinister_id, events_count_id=count.id,
+             poliza=count.poliza, prefijo=count.prefijo, status_eventos=EstatusEventoEnum.RESERVADO,
+             fecha_inicio_eventos=fecha_inicio, fecha_fin_eventos=fecha_fin, numero_eventos=dias,
+-            audit_created_at=Constants.DATE_TODAY, audit_created_by=g.current_user.id,
++            audit_created_at=datetime.now(timezone.utc), audit_created_by=g.current_user.id,
+         )
+         self.session.add(event)
+         count.eventos_usados += dias
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/definitions.py b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/definitions.py
+index 8da1147c..1de70503 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/definitions.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/definitions.py
+@@ -2,7 +2,6 @@ from datetime import datetime, timezone
+ 
+ 
+ class Constants:
+-    DATE_TODAY = datetime.now(timezone.utc)
+     SERVICE_NOT_FOUND = "Service not found"
+     SERVICE_FOLIO = "folio_servicio"
+     RESERVATION_NUMBER = "numero_reservacion"
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/report_manager.py b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/report_manager.py
+index 8fa4878e..5a922ff4 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/report_manager.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/report_manager.py
+@@ -23,7 +23,6 @@ import logging
+ from queue import Queue
+ import threading
+ 
+-DATE_TODAY = datetime.now(timezone.utc)
+ tasks = Queue()
+ 
+ def reconnect_on_failure(engine: Engine):
+@@ -146,7 +145,7 @@ class GeneracionReporte:
+             fecha_fin=fecha_fin,
+             tipo_documento=tipo_documento,
+             estatus=EstatusReporte.pending,
+-            audit_created_at=DATE_TODAY,
++            audit_created_at=datetime.now(timezone.utc),
+             audit_created_by=g.current_user.id
+         )
+ 
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/documents_manager/documents_manager_service.py b/apiserver/ix/boletas_informativas/auto_relevo/api/documents_manager/documents_manager_service.py
+index 284251ca..400f9c67 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/documents_manager/documents_manager_service.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/documents_manager/documents_manager_service.py
+@@ -12,7 +12,6 @@ ERROR_INVALID_ID = "ID inválido"
+ ERROR_UNEXPECTED = "Error inesperado"
+ ERROR_INTERNAL = "Error interno"
+ 
+-DATE_TODAY = datetime.now(timezone.utc)
+ 
+ def handle_exceptions(func):
+     """Decorador para manejar excepciones comunes."""
+@@ -82,7 +81,7 @@ class DocumentsManagerService:
+             descripcion=descripcion,
+             audit_created_by=created_by,
+             audit_updated_by=created_by,
+-            audit_created_at=DATE_TODAY
++            audit_created_at=datetime.now(timezone.utc)
+         )
+         g.s().add(tipo_servicio)
+         g.s().commit()
+@@ -143,7 +142,7 @@ class DocumentsManagerService:
+             tipo_servicio.descripcion = descripcion
+         if updated_by:
+             tipo_servicio.audit_updated_by = updated_by
+-        tipo_servicio.audit_updated_at = DATE_TODAY
++        tipo_servicio.audit_updated_at = datetime.now(timezone.utc)
+ 
+         g.s().commit()
+         data = {
+@@ -165,7 +164,7 @@ class DocumentsManagerService:
+             "descripcion": tipo_servicio.descripcion
+         }
+         tipo_servicio.active_record = False
+-        tipo_servicio.audit_deleted_at = DATE_TODAY
++        tipo_servicio.audit_deleted_at = datetime.now(timezone.utc)
+         tipo_servicio.audit_deleted_by = deleted_by
+         g.s().commit()
+         return {"detail": "Tipo de servicio eliminado exitosamente", "data": data}
+@@ -190,7 +189,7 @@ class DocumentsManagerService:
+             obligatorio=obligatorio,
+             audit_created_by=created_by,
+             audit_updated_by=created_by,
+-            audit_created_at=DATE_TODAY
++            audit_created_at=datetime.now(timezone.utc)
+         )
+         g.s().add(documento)
+         g.s().commit()
+@@ -280,7 +279,7 @@ class DocumentsManagerService:
+             documento.obligatorio = obligatorio
+         if updated_by:
+             documento.audit_updated_by = updated_by
+-        documento.audit_updated_at = DATE_TODAY
++        documento.audit_updated_at = datetime.now(timezone.utc)
+ 
+         g.s().commit()
+         data = {
+@@ -306,7 +305,7 @@ class DocumentsManagerService:
+             "obligatorio": documento.obligatorio
+         }
+         documento.active_record = False
+-        documento.audit_deleted_at = DATE_TODAY
++        documento.audit_deleted_at = datetime.now(timezone.utc)
+         documento.audit_deleted_by = deleted_by
+         g.s().commit()
+         return {"detail": "Documento requerido eliminado exitosamente", "data": data}
+\ No newline at end of file

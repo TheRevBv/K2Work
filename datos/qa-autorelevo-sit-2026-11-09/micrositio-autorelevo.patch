@@ -1,0 +1,435 @@
+diff --git a/.gitignore b/.gitignore
+index 6fd80ba..eef6faa 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -56,3 +56,4 @@ coverage/
+ .nx/cache/
+ .nx/workspace-data/
+ docs/.codex-*.log
++autorelevo-e2e/.auth/
+diff --git a/autorelevo-e2e/playwright.config.ts b/autorelevo-e2e/playwright.config.ts
+index dc08cf8..ab861f1 100644
+--- a/autorelevo-e2e/playwright.config.ts
++++ b/autorelevo-e2e/playwright.config.ts
+@@ -23,7 +23,7 @@ export default defineConfig({
+     trace: 'on-first-retry',
+   },
+   /* Run your local dev server before starting the tests */
+-  webServer: {
++  webServer: process.env['BASE_URL'] ? undefined : {
+     command: 'npx nx run autorelevo:serve',
+     url: 'http://localhost:4200',
+     reuseExistingServer: true,
+diff --git a/autorelevo-e2e/src/qa/bugs-sit.spec.ts b/autorelevo-e2e/src/qa/bugs-sit.spec.ts
+new file mode 100644
+index 0000000..06d031d
+--- /dev/null
++++ b/autorelevo-e2e/src/qa/bugs-sit.spec.ts
+@@ -0,0 +1,94 @@
++import { test, expect, Page } from '@playwright/test';
++import { evidencia, hastaOtp, loginConFolio } from './sesion';
++
++/**
++ * Bugs SIT del micrositio de autorelevo. El OTP llega al teléfono/correo de la póliza:
++ *   BASE_URL=https://micrositio-autorelevo-web-dot-morfeo-test.ue.r.appspot.com \
++ *     npx playwright test -c autorelevo-e2e qa/ --project=chromium --headed --workers=1
++ */
++test.setTimeout(15 * 60_000);
++
++test('BUG-87293BEC: el timer corre tras reenviar con el código expirado', async ({ page }) => {
++  await page.clock.install();
++  await hastaOtp(page);
++  const timer = page.locator('.of-timer');
++
++  await page.clock.runFor(10_000);
++  await expect(timer, 'control: el primer conteo sí corre').toContainText('4:50');
++  await page.clock.runFor('04:51');
++  await expect(timer).toContainText('Código expirado');
++
++  await page.getByRole('button', { name: 'Reenviar código' }).click();
++  await expect(timer).toContainText('5:00');
++  await page.clock.runFor(10_000);
++  await expect(timer).toContainText('4:50');
++  await evidencia(page, 'BUG-87293BEC', 'timer-tras-reenvio');
++
++});
++
++test.describe('con folio activo (un solo OTP)', () => {
++  test.describe.configure({ mode: 'serial' });
++  let page: Page;
++  let locations: Promise<import('@playwright/test').Response>;
++
++  async function irASucursal(): Promise<void> {
++    if (page.url().includes('/estado/sucursal')) return;
++    await page.goto('estado');
++    await page.getByRole('button', { name: 'Seleccionar sucursal' }).click();
++    await page.waitForURL(/estado\/sucursal/);
++  }
++
++  test.beforeAll(async ({ browser, baseURL }) => {
++    page = await browser.newPage({ baseURL });
++    locations = page.waitForResponse((r) => r.url().includes('locations'), { timeout: 5 * 60_000 });
++    await loginConFolio(page);
++    if (!page.url().includes('/estado/sucursal')) {
++      await page.getByRole('button', { name: 'Seleccionar sucursal' }).click();
++    }
++  });
++
++  test.afterAll(() => page?.close());
++
++  test('BUG-90FD668C: carga la lista de sucursales', async () => {
++    const res = await locations;
++    await evidencia(page, 'BUG-90FD668C', 'sucursales');
++    expect(res.status(), `GET ${res.url()}`).toBeLessThan(400);
++    await expect(page.getByText('Cargando sucursales disponibles')).toBeHidden({ timeout: 30_000 });
++    await expect(page.locator('.su-loc-name, select#sucursal option').first()).toBeVisible();
++  });
++  
++  test('BUG-435440F4: campos de fecha y hora completos y alineados', async () => {
++    await irASucursal();
++    const sucursal = page.locator('select#sucursal');
++    if (await sucursal.isVisible()) await sucursal.selectOption({ index: 1 });
++    await page.getByRole('button', { name: 'Continuar' }).click();
++    await page.waitForURL(/solicitud\/vehiculo/);
++  
++    const campos = page.locator('#fechaInicio, #fechaFin, #hora');
++    await expect(campos).toHaveCount(3);
++    const cajas = await Promise.all((await campos.all()).map((c) => c.boundingBox()));
++    for (const [i, c] of (await campos.all()).entries()) {
++      const recortado = await c.evaluate((el: HTMLInputElement) => el.scrollWidth > el.clientWidth);
++      expect(recortado, `campo ${i} recortado`).toBe(false);
++    }
++    expect(Math.abs(cajas[0]!.height - cajas[2]!.height), 'misma altura').toBeLessThanOrEqual(1);
++    await evidencia(page, 'BUG-435440F4', 'fechas-hora');
++  });
++  
++  test('BUG-52C30DF7: Regresar confirma, cierra sesión y vuelve al inicio', async () => {
++    await irASucursal();
++    let confirmo = false;
++    page.once('dialog', (d) => { confirmo = true; void d.accept(); });
++  
++    await page.getByRole('button', { name: 'Regresar' }).click();
++    const modal = page.getByRole('dialog');
++    if (await modal.isVisible().catch(() => false)) {
++      confirmo = true;
++      await modal.getByRole('button', { name: /s[ií]|aceptar|salir|confirmar/i }).click();
++    }
++    await evidencia(page, 'BUG-52C30DF7', 'tras-regresar');
++    expect(confirmo, 'debe pedir confirmación').toBe(true);
++    await expect(page).not.toHaveURL(/\/estado/);
++    expect(await page.evaluate(() => sessionStorage.getItem('ar_session'))).toBeNull();
++  });
++});
+diff --git a/autorelevo-e2e/src/qa/sesion.ts b/autorelevo-e2e/src/qa/sesion.ts
+new file mode 100644
+index 0000000..4a6b5ab
+--- /dev/null
++++ b/autorelevo-e2e/src/qa/sesion.ts
+@@ -0,0 +1,111 @@
++import { Page, expect } from '@playwright/test';
++import { execFileSync } from 'node:child_process';
++import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
++import { join } from 'node:path';
++
++/** Póliza de `polizas-prueba.txt`; se sobreescribe por variables de entorno. */
++export const POLIZA = process.env['POLIZA'] ?? 'CE50002775';
++export const INCISO = process.env['INCISO'] ?? '1';
++export const NUM_ASEGURADO = process.env['NUM_ASEGURADO'] ?? '18770895';
++export const OTP_FILE = process.env['OTP_FILE'] ?? join(__dirname, '..', '..', 'otp.txt');
++export const SESION_FILE = process.env['SESION_FILE'] ?? join(__dirname, '..', '..', '.auth', 'sesion-qa.json');
++/** Ruta a bin/k2-sql de K2Work; si existe, el OTP se lee de web_service_log en dev. */
++const K2_SQL = process.env['K2_SQL'] ?? join(process.env['HOME'] ?? '', 'Código/personal/K2Work/bin/k2-sql');
++export const EVIDENCIA = process.env['OUT_DIR'] ?? join(__dirname, '..', '..', 'test-output', 'qa');
++
++export async function evidencia(page: Page, bug: string, nombre: string): Promise<void> {
++  mkdirSync(join(EVIDENCIA, bug), { recursive: true });
++  await page.screenshot({ path: join(EVIDENCIA, bug, `${nombre}.png`), fullPage: true });
++}
++
++/**
++ * API_FROM=https://host-compilado API_TO=https://host-real: reenvía el API cuando el build
++ * trae un k2ApiUrl distinto al despliegue que se prueba (evita CORS).
++ */
++async function redirigirApi(page: Page): Promise<void> {
++  const from = process.env['API_FROM'];
++  const to = process.env['API_TO'];
++  if (!from || !to) return;
++  await page.route(`${from}/**`, async (route) => {
++    const res = await route.fetch({ url: route.request().url().replace(from, to) });
++    await route.fulfill({ response: res, headers: { ...res.headers(), 'access-control-allow-origin': '*' } });
++  });
++}
++
++function sql(q: string): string {
++  return execFileSync(K2_SQL, ['dev', '-e', q], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
++}
++
++function ultimoLogId(): number {
++  return Number(sql('SELECT MAX(id) FROM web_service_log').match(/\d+/g)?.pop() ?? 0);
++}
++
++async function otpDesdeBd(desdeId: number): Promise<string> {
++  for (;;) {
++    const out = sql(`SELECT request_ FROM web_service_log WHERE id > ${desdeId} AND name = 'SMS_TRANSACTION' ORDER BY id DESC LIMIT 1`);
++    const code = out.match(/es: (\d{6})/)?.[1];
++    if (code) return code;
++    await new Promise((r) => setTimeout(r, 3000));
++  }
++}
++
++let logIdAntesDeEnviar = 0;
++
++/** Llena login y pide el código por SMS; deja la página en /auth/otp. */
++export async function hastaOtp(page: Page): Promise<void> {
++  rmSync(OTP_FILE, { force: true });
++  await redirigirApi(page);
++  await page.goto('auth/login');
++  await page.locator('#numPoliza').fill(POLIZA);
++  await page.locator('#inciso').fill(INCISO);
++  await page.locator('#numAsegurado').fill(NUM_ASEGURADO);
++  await page.locator('form button[type="submit"]').click();
++  await page.waitForURL(/verificacion|otp/, { timeout: 60_000 });
++  if (page.url().includes('verificacion')) {
++    await page.locator('app-selection-card').first().click();
++    if (existsSync(K2_SQL)) logIdAntesDeEnviar = ultimoLogId();
++    await page.getByRole('button', { name: 'Enviar código' }).click();
++  }
++  await page.waitForURL(/auth\/otp/, { timeout: 60_000 });
++}
++
++/** Espera el OTP tecleado en la ventana (--headed) o escrito en OTP_FILE. */
++export async function capturarOtp(page: Page): Promise<void> {
++  console.log(`>>> Teclea el OTP en el navegador o escríbelo en ${OTP_FILE}`);
++  const manual = page.waitForURL((u) => !u.pathname.includes('/auth/otp'), { timeout: 10 * 60_000 });
++  const archivo = (async () => {
++    for (;;) {
++      if (existsSync(OTP_FILE)) {
++        const code = readFileSync(OTP_FILE, 'utf8').replace(/\D/g, '');
++        if (code.length === 6) return code;
++      }
++      await new Promise((r) => setTimeout(r, 1000));
++    }
++  })();
++  const fuentes: Promise<string | null>[] = [manual.then(() => null), archivo];
++  if (logIdAntesDeEnviar) fuentes.push(otpDesdeBd(logIdAntesDeEnviar));
++  const r = await Promise.race(fuentes);
++  if (r) await page.locator('input[inputmode="numeric"]').first().focus().then(() => page.keyboard.type(r));
++  await page.waitForURL(/solicitud|estado/, { timeout: 60_000 });
++}
++
++/** Login completo; termina en /estado o /estado/sucursal si la póliza tiene folio activo. */
++export async function loginConFolio(page: Page): Promise<void> {
++  if (existsSync(SESION_FILE)) {
++    const datos = readFileSync(SESION_FILE, 'utf8');
++    await redirigirApi(page);
++    await page.addInitScript((d) => {
++      if (sessionStorage.getItem('__e2e')) return;
++      sessionStorage.setItem('__e2e', '1');
++      for (const [k, v] of Object.entries(JSON.parse(d) as Record<string, string>)) sessionStorage.setItem(k, v);
++    }, datos);
++    await page.goto('estado');
++    if (!page.url().includes('auth')) return;
++    rmSync(SESION_FILE);
++  }
++  await hastaOtp(page);
++  await capturarOtp(page);
++  mkdirSync(join(SESION_FILE, '..'), { recursive: true });
++  writeFileSync(SESION_FILE, await page.evaluate(() => JSON.stringify({ ...sessionStorage })));
++  await expect(page, 'la póliza debe tener un folio activo (usa POLIZA/NUM_ASEGURADO)').toHaveURL(/\/estado/);
++}
+diff --git a/autorelevo/src/app/core/services/k2-api.service.ts b/autorelevo/src/app/core/services/k2-api.service.ts
+index a351bdd..fb2944d 100644
+--- a/autorelevo/src/app/core/services/k2-api.service.ts
++++ b/autorelevo/src/app/core/services/k2-api.service.ts
+@@ -296,9 +296,11 @@ export class K2ApiService {
+     poliza: string,
+     tipoServicioId = 1,
+     motivoServicioId?: number | null,
+-    titular?: TitularTicket
++    titular?: TitularTicket,
++    diasSolicitados?: number
+   ): Observable<K2TicketResponse> {
+     const body: Record<string, unknown> = { poliza, tipo_servicio_id: tipoServicioId };
++    if (diasSolicitados) body['dias_solicitados'] = diasSolicitados;
+     if (sinisterChubbId) body['sinister_chubb_id'] = sinisterChubbId;
+     if (motivoServicioId) {
+       body['boleta_informativa'] = { motivo_servicio_id: motivoServicioId };
+diff --git a/autorelevo/src/app/features/estado/sucursal/sucursal.component.ts b/autorelevo/src/app/features/estado/sucursal/sucursal.component.ts
+index 7ba3a9e..1206b76 100644
+--- a/autorelevo/src/app/features/estado/sucursal/sucursal.component.ts
++++ b/autorelevo/src/app/features/estado/sucursal/sucursal.component.ts
+@@ -88,11 +88,20 @@ const SIDEBAR_STEPS: Step[] = [
+         }
+ 
+         <!-- Loading state -->
+-        @if (sucursales().length === 0) {
++        @if (carga() === 'cargando') {
+           <div class="su-loading" aria-live="polite">
+             <cb-inline-spinner></cb-inline-spinner>
+             Cargando sucursales disponibles…
+           </div>
++        } @else if (carga() === 'error') {
++          <div class="su-loading" role="alert">
++            No pudimos cargar las sucursales.
++            <button type="button" cbButton [variant]="'ghost'" (click)="cargarSucursales()">Reintentar</button>
++          </div>
++        } @else if (sucursales().length === 0) {
++          <div class="su-loading" role="status">
++            No hay sucursales disponibles para tu ubicación. Comunícate al número de abajo.
++          </div>
+         }
+ 
+         <p class="su-contact">
+@@ -255,6 +264,7 @@ export class SucursalComponent implements OnInit {
+   protected folio = this.solicitudSvc.folio;
+   protected sucursales = signal<Sucursal[]>([]);
+   protected selectedSucursalId = '';
++  protected carga = signal<'cargando' | 'listo' | 'error'>('cargando');
+ 
+   protected motivoLabel = computed(() => {
+     const labels: Record<string, string> = {
+@@ -267,22 +277,33 @@ export class SucursalComponent implements OnInit {
+   });
+ 
+   ngOnInit(): void {
++    this.cargarSucursales();
++  }
++
++  protected cargarSucursales(): void {
+     const folioId = this.folio()?.id;
+-    if (folioId) {
+-      const ciudadAsegurado = this.session()?.municipio?.trim();
+-      const estadoAsegurado = this.session()?.estado?.trim();
+-
+-      this.apiSvc.getSucursales(folioId, ciudadAsegurado, estadoAsegurado).subscribe({
+-        next: (list) => {
+-          this.sucursales.set(list);
+-          if (list.length === 1) {
+-            this.selectedSucursalId = list[0].id;
+-            this.solicitudSvc.setSucursal(list[0]);
+-          }
+-        },
+-        error: () => {},
+-      });
++    if (!folioId) {
++      this.carga.set('error');
++      return;
+     }
++    this.carga.set('cargando');
++    const ciudadAsegurado = this.session()?.municipio?.trim();
++    const estadoAsegurado = this.session()?.estado?.trim();
++
++    this.apiSvc.getSucursales(folioId, ciudadAsegurado, estadoAsegurado).subscribe({
++      next: (list) => {
++        this.sucursales.set(list);
++        if (list.length === 1) {
++          this.selectedSucursalId = list[0].id;
++          this.solicitudSvc.setSucursal(list[0]);
++        }
++        this.carga.set('listo');
++      },
++      error: (err) => {
++        console.error('[Sucursal] Error al cargar sucursales', err);
++        this.carga.set('error');
++      },
++    });
+   }
+ 
+   protected continuar(): void {
+@@ -291,7 +312,10 @@ export class SucursalComponent implements OnInit {
+     this.router.navigate(['/solicitud/vehiculo']);
+   }
+ 
+-  protected back(): void { this.router.navigate(['/estado']); }
++  /** /estado redirige de vuelta aquí mientras el folio espere sucursal, así que Regresar sale de la consulta. */
++  protected back(): void {
++    if (confirm('¿Deseas salir de la consulta de tu solicitud? Se cerrará tu sesión.')) this.auth.logout();
++  }
+ 
+   protected getPlanLabel(): string | undefined {
+     const plan = this.auth.session()?.planAutoRelevo;
+diff --git a/autorelevo/src/app/features/solicitud/captura-info/captura-info.component.ts b/autorelevo/src/app/features/solicitud/captura-info/captura-info.component.ts
+index d5e540d..426112a 100644
+--- a/autorelevo/src/app/features/solicitud/captura-info/captura-info.component.ts
++++ b/autorelevo/src/app/features/solicitud/captura-info/captura-info.component.ts
+@@ -155,6 +155,13 @@ const MOTIVO_LABELS: Record<MotivoSolicitud, string> = {
+                   <div cbInput [label]="'Motivo'" [readonly]="true">
+                     <input type="text" [value]="motivoLabel()" readonly />
+                   </div>
++                  <div cbInput
++                    [label]="'Días de renta'"
++                    [styleVariant]="'white-fill'"
++                    [errorState]="submitted1 && form.controls['diasRenta'].invalid"
++                    [errorMessage]="submitted1 && form.controls['diasRenta'].invalid ? 'Indica un número entero mayor a 0' : null">
++                    <input id="diasRenta" type="number" min="1" step="1" formControlName="diasRenta" />
++                  </div>
+                 </div>
+               </div>
+ 
+@@ -329,6 +336,7 @@ export class CapturaInfoComponent implements OnInit {
+     tallerNombre:    [''],
+     tallerFecha:     [''],
+     tallerTelefono:  [''],
++    diasRenta:       [1, [Validators.required, Validators.min(1), Validators.pattern(/^\d+$/)]],
+   });
+ 
+   ngOnInit(): void {
+@@ -366,7 +374,7 @@ export class CapturaInfoComponent implements OnInit {
+ 
+   protected irADocumentos(): void {
+     this.submitted1 = true;
+-    const paso1Controls = ['nombres', 'primerApellido', 'telefono', 'email', 'municipio', 'estado', 'codigoPostal'];
++    const paso1Controls = ['nombres', 'primerApellido', 'telefono', 'email', 'municipio', 'estado', 'codigoPostal', 'diasRenta'];
+     const paso1Invalid = paso1Controls.some(k => this.form.controls[k as keyof typeof this.form.controls].invalid);
+     if (paso1Invalid) return;
+ 
+@@ -458,7 +466,7 @@ export class CapturaInfoComponent implements OnInit {
+     email: string,
+     motivoServicioId: number
+   ): void {
+-    this.k2Svc.crearTicket(numSiniestro, poliza, 1, motivoServicioId, this.titularCapturado()).subscribe({
++    this.k2Svc.crearTicket(numSiniestro, poliza, 1, motivoServicioId, this.titularCapturado(), Number(this.form.getRawValue().diasRenta)).subscribe({
+       next: (ticket) => {
+         const servicioId = ticket.ServicioAutoRelevo?.id;
+ 
+@@ -479,7 +487,9 @@ export class CapturaInfoComponent implements OnInit {
+           url: err?.url,
+           error: err?.error,
+         });
+-        const msg = err?.error?.detail ?? err?.error?.message ?? err?.error?.error;
++        // K2 responde {error: {error, detail}} en validaciones y {detail} en otros errores.
++        const e = err?.error;
++        const msg = e?.error?.detail ?? e?.detail ?? e?.message ?? (typeof e?.error === 'string' ? e.error : null);
+         const status = err?.status ?? 0;
+         this.apiError.set(
+           msg
+diff --git a/autorelevo/src/app/features/vehiculo/seleccion-vehiculo/seleccion-vehiculo.component.ts b/autorelevo/src/app/features/vehiculo/seleccion-vehiculo/seleccion-vehiculo.component.ts
+index 7707978..36a40d8 100644
+--- a/autorelevo/src/app/features/vehiculo/seleccion-vehiculo/seleccion-vehiculo.component.ts
++++ b/autorelevo/src/app/features/vehiculo/seleccion-vehiculo/seleccion-vehiculo.component.ts
+@@ -77,14 +77,12 @@ const MAX_RESERVATION_DAYS = 20;
+           <div class="form-grid cols-3">
+             <div cbInput
+               [label]="'Fecha de inicio'"
+-              [styleVariant]="'white-fill'"
+-              [iconSuffix]="'utility-calendar-stroke'">
++              [styleVariant]="'white-fill'">
+               <input id="fechaInicio" type="date" [(ngModel)]="fechaInicio" [min]="today" name="fechaInicio" />
+             </div>
+             <div cbInput
+               [label]="'Fecha de fin'"
+               [styleVariant]="'white-fill'"
+-              [iconSuffix]="'utility-calendar-stroke'"
+               [errorState]="rangoFechasInvalido() || rangoDiasExcedido()"
+               [errorMessage]="
+                 rangoFechasInvalido()
+@@ -102,8 +100,7 @@ const MAX_RESERVATION_DAYS = 20;
+             </div>
+             <div cbInput
+               [label]="'Hora de recolección'"
+-              [styleVariant]="'white-fill'"
+-              [iconSuffix]="'utility-clock-stroke'">
++              [styleVariant]="'white-fill'">
+               <input id="hora" type="time" [(ngModel)]="hora" name="hora" />
+             </div>
+             <div class="sv-field">

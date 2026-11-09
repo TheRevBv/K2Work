@@ -35,10 +35,10 @@ try {
   if (-not (Test-Path 'autorelevo\project.json')) { throw 'Ejecuta el script desde la raiz del repo del micrositio.' }
   if (-not (Test-Path $A.Yaml)) { throw "No existe $($A.Yaml)" }
 
-  Invoke-Paso "[1/4] Build Angular ($($A.Config))" { npx.cmd nx build autorelevo "--configuration=$($A.Config)" }
+  Invoke-Paso "[1/4] Build Angular ($($A.Config))" { npx.cmd nx build autorelevo "--configuration=$($A.Config)" --skip-nx-cache }
 
   $Origen = 'dist\autorelevo\browser'
-  if (Get-ChildItem $Origen -Recurse -Filter '*.js' | Select-String -SimpleMatch -Quiet 'morfeo-prod') {
+  if (@(Get-ChildItem $Origen -Recurse -Filter '*.js' | Select-String -SimpleMatch 'morfeo-prod' -List).Count -gt 0) {
     throw 'El bundle contiene URLs de prod. Despliegue cancelado.'
   }
 
