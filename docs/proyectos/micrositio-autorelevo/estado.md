@@ -1,5 +1,10 @@
 # Estado del micrositio Autorelevo
 
+## 2026-11-09 — Preparación de prueba AVASA en test
+
+- Procedimiento de lectura y rastreo documentados en `../../tareas/qa-autorelevo-sit-2026-11-09.md`, sección «Validación de la llave AVASA en test».
+- Pendiente ejecutar contra test. El servidor local carga la llave al arrancar y prioriza `AVASA_API_KEY` sobre Secret Manager; un 200 con sucursales valida la credencial efectiva, pero su identidad requiere comprobar configuración y actualización de instancias.
+
 Fuentes: `Autorelevo_Contexto_y_Prompt_Codex.md` (22 sep 2026), `micrositio-autorelevo/docs/REANALISIS-2026-09-24.md` y memorias del proyecto. Las afirmaciones de las notas son lo documentado por esas fuentes, no una verificación nueva.
 
 ## Hecho

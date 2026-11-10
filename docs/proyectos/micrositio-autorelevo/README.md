@@ -2,6 +2,8 @@
 
 Micrositio para que el asegurado de Chubb solicite un vehículo de reemplazo (Auto Relevo) cuando su vehículo está fuera de circulación. Consume el backend de K2 (Flask) y, para reservación, AVASA. El análisis de contexto y el prompt original están en [`Autorelevo_Contexto_y_Prompt_Codex.md`](Autorelevo_Contexto_y_Prompt_Codex.md), cuya fuente de requisitos es el PRD de Confluence "PRD Micrositio AutoRelevo" (espacio CDS1).
 
+Resumen del PRD y cómo se implementa: [`prd.md`](prd.md).
+
 ## Alcance
 
 - Responsable de este espacio: Joshua (solicitud rechazada, carga de documentos, flujos de pérdida parcial, pérdida total, detención legal y avería mecánica).

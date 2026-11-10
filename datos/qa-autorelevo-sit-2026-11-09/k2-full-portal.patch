@@ -47,7 +47,7 @@ index 6997d6c4..2ff2aff4 100644
      }
  
 diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
-index 5c90f50f..2cc2b1c6 100644
+index 5c90f50f..0215b324 100644
 --- a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
 +++ b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
 @@ -28,7 +28,6 @@ ERROR_NO_RESULTS = "Sin resultados"
@@ -58,6 +58,15 @@ index 5c90f50f..2cc2b1c6 100644
  
  # Campos de vigencia de Chubb, confirmados en la busqueda por poliza y por siniestro (formato 12/Oct/2027).
  VIGENCIA_INICIO_KEYS = ("InicioVigencia", "FechaInicioVigencia")
+@@ -299,7 +298,7 @@ class AutoRelevoService:
+         
+             data_manager = AutoRelevoDataManager(g.s())
+             autorelevo_sinister = data_manager.create_autorelevo_sinister(sinister_data, parsed_payload)
+-            events_manager.reserve(events_count, autorelevo_sinister.id, payload["dias_solicitados"])
++            events_manager.reserve(events_count, autorelevo_sinister.id, payload.get("dias_solicitados") or 0)
+             boleta = data_manager.create_boleta_informativa(autorelevo_sinister.id, parsed_payload.get("boleta_informativa"))
+             datos_titular = data_manager.create_datos_titular(parsed_payload.get("datos_titular"))
+             data_manager.create_ubicacion_titular(datos_titular.id, parsed_payload.get("ubicacion_titular"))
 @@ -340,7 +339,9 @@ class AutoRelevoService:
  
              self._update_related_entities(data_manager, servicio, payload)
@@ -317,7 +326,7 @@ index 901f68a7..b84f5405 100644
              
              self.session.add(servicio)
 diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_events_manager.py b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_events_manager.py
-index 10efd333..22a3e087 100644
+index 10efd333..0bdec29f 100644
 --- a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_events_manager.py
 +++ b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_events_manager.py
 @@ -1,4 +1,4 @@
@@ -326,7 +335,26 @@ index 10efd333..22a3e087 100644
  from flask import g
  from ix.api import errors
  from ix.boletas_informativas.auto_relevo.api.auto_relevo_boleta.auto_relevo_boleta_models import (
-@@ -75,7 +75,7 @@ class AutoRelevoEventsManager:
+@@ -58,12 +58,16 @@ class AutoRelevoEventsManager:
+         count.audit_updated_by = g.current_user.id
+ 
+     def validate_and_get_count(self, prefijo, poliza, inciso, vigencia_inicio, vigencia_fin, dias):
+-        """Valida vigencia y eventos disponibles. Crea el conteo si es la primera vez en la vigencia."""
++        """Valida vigencia y eventos disponibles. Crea el conteo si es la primera vez en la vigencia.
++
++        `dias` es opcional: el micrositio no los conoce al crear el folio; se toman de las
++        fechas de la reservación vía `settle`.
++        """
+         if not vigencia_fin:
+             self._error("No se pudo determinar la vigencia de la póliza para validar los eventos de AutoRelevo.")
+         if vigencia_fin < date.today():
+             self._error(f"La vigencia de la póliza terminó el {vigencia_fin.strftime('%d/%m/%Y')}, no se puede generar el folio.")
+-        if not isinstance(dias, int) or isinstance(dias, bool) or dias < 1:
++        if dias is not None and (not isinstance(dias, int) or isinstance(dias, bool) or dias < 1):
+             self._error("Debe indicar los días de renta del vehículo (mínimo 1).")
+ 
+         # Si Chubb no informa el inicio, se aproxima un anio atras para poder identificar la vigencia.
+@@ -75,7 +79,7 @@ class AutoRelevoEventsManager:
                  vigencia_inicio=inicio, vigencia_fin=vigencia_fin,
                  eventos_total=Constants.DEFAULT_EVENTS_TOTAL, eventos_usados=0,
                  eventos_restantes=Constants.DEFAULT_EVENTS_TOTAL,
@@ -335,7 +363,16 @@ index 10efd333..22a3e087 100644
              )
              self.session.add(count)
              self.session.flush()
-@@ -101,7 +101,7 @@ class AutoRelevoEventsManager:
+@@ -91,7 +95,7 @@ class AutoRelevoEventsManager:
+ 
+         if count.eventos_restantes <= 0:
+             self._error("No hay días de renta de AutoRelevo disponibles en la vigencia de la póliza, no se puede generar el folio.")
+-        if dias > count.eventos_restantes:
++        if dias and dias > count.eventos_restantes:
+             self._error(f"Los días de renta solicitados ({dias}) exceden los disponibles: solo quedan {count.eventos_restantes} días de AutoRelevo en la vigencia de la póliza.")
+         return count
+ 
+@@ -101,7 +105,7 @@ class AutoRelevoEventsManager:
              autorelevo_sinister_id=autorelevo_sinister_id, events_count_id=count.id,
              poliza=count.poliza, prefijo=count.prefijo, status_eventos=EstatusEventoEnum.RESERVADO,
              fecha_inicio_eventos=fecha_inicio, fecha_fin_eventos=fecha_fin, numero_eventos=dias,

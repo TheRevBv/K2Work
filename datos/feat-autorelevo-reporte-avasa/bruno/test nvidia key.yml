@@ -1,0 +1,42 @@
+info:
+  name: test nvidia key
+  type: http
+  seq: 14
+
+http:
+  method: POST
+  url: https://integrate.api.nvidia.com/v1/chat/completions
+  headers:
+    - name: Content-Type
+      value: application/json
+  body:
+    type: json
+    data: |-
+      {
+        "model": "deepseek-ai/deepseek-v4.1-flash",
+        "temperature": 1,
+        "top_p": 0.95,
+        "messages": [
+          {
+            "role": "user",
+            "content": "Responde solamente: OK"
+          }
+        ],
+        "max_tokens": 32,
+        "stream": false
+      }
+  auth:
+    type: bearer
+    token: "{{nvidia_token}}"
+
+runtime:
+  variables:
+    - name: nvidia_token
+      value: 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
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

@@ -48,7 +48,21 @@ try {
   }
   Invoke-Paso '[3/4] Copiar build' { Copy-Item "$Origen\*" 'deploy\dist' -Recurse }
 
-  $Argumentos = @('app', 'deploy', $A.Yaml, "--project=$($A.Proyecto)", '--quiet')
+  # shortcut: deploy\.env se agrega al final de env_variables (debe ser la ultima seccion del yaml); usar Secret Manager en test/prod.
+  $YamlDeploy = $A.Yaml
+  if (Test-Path 'deploy\.env') {
+    $Extra = Get-Content 'deploy\.env' | Where-Object { $_ -match '^\s*[A-Z_][A-Z0-9_]*\s*=' } | ForEach-Object {
+      $k, $v = $_ -split '=', 2
+      '  {0}: "{1}"' -f $k.Trim(), ($v.Trim().Trim('"') -replace '"', '\"')
+    }
+    $Base = Get-Content $A.Yaml
+    if (-not ($Base -match '^env_variables:')) { $Base += 'env_variables:' }
+    $YamlDeploy = 'deploy\app.generated.yaml'
+    $Base + $Extra | Set-Content $YamlDeploy -Encoding utf8
+    Write-Host "Variables de deploy\.env agregadas: $(($Extra | ForEach-Object { ($_ -split ':')[0].Trim() }) -join ', ')"
+  }
+
+  $Argumentos = @('app', 'deploy', $YamlDeploy, "--project=$($A.Proyecto)", '--quiet')
   if ($Version) { $Argumentos += "--version=$Version" }
   if ($NoPromote) { $Argumentos += '--no-promote' }
   Invoke-Paso '[4/4] gcloud app deploy' { gcloud.cmd @Argumentos }
@@ -61,5 +75,6 @@ catch {
   exit 1
 }
 finally {
+  if (Test-Path 'deploy\app.generated.yaml') { Remove-Item 'deploy\app.generated.yaml' -Force }
   Stop-Transcript | Out-Null
 }

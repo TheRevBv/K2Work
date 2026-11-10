@@ -237,23 +237,6 @@ index 0000000..4a6b5ab
 +  writeFileSync(SESION_FILE, await page.evaluate(() => JSON.stringify({ ...sessionStorage })));
 +  await expect(page, 'la póliza debe tener un folio activo (usa POLIZA/NUM_ASEGURADO)').toHaveURL(/\/estado/);
 +}
-diff --git a/autorelevo/src/app/core/services/k2-api.service.ts b/autorelevo/src/app/core/services/k2-api.service.ts
-index a351bdd..fb2944d 100644
---- a/autorelevo/src/app/core/services/k2-api.service.ts
-+++ b/autorelevo/src/app/core/services/k2-api.service.ts
-@@ -296,9 +296,11 @@ export class K2ApiService {
-     poliza: string,
-     tipoServicioId = 1,
-     motivoServicioId?: number | null,
--    titular?: TitularTicket
-+    titular?: TitularTicket,
-+    diasSolicitados?: number
-   ): Observable<K2TicketResponse> {
-     const body: Record<string, unknown> = { poliza, tipo_servicio_id: tipoServicioId };
-+    if (diasSolicitados) body['dias_solicitados'] = diasSolicitados;
-     if (sinisterChubbId) body['sinister_chubb_id'] = sinisterChubbId;
-     if (motivoServicioId) {
-       body['boleta_informativa'] = { motivo_servicio_id: motivoServicioId };
 diff --git a/autorelevo/src/app/features/estado/sucursal/sucursal.component.ts b/autorelevo/src/app/features/estado/sucursal/sucursal.component.ts
 index 7ba3a9e..1206b76 100644
 --- a/autorelevo/src/app/features/estado/sucursal/sucursal.component.ts
@@ -349,50 +332,10 @@ index 7ba3a9e..1206b76 100644
    protected getPlanLabel(): string | undefined {
      const plan = this.auth.session()?.planAutoRelevo;
 diff --git a/autorelevo/src/app/features/solicitud/captura-info/captura-info.component.ts b/autorelevo/src/app/features/solicitud/captura-info/captura-info.component.ts
-index d5e540d..426112a 100644
+index d5e540d..2a79e81 100644
 --- a/autorelevo/src/app/features/solicitud/captura-info/captura-info.component.ts
 +++ b/autorelevo/src/app/features/solicitud/captura-info/captura-info.component.ts
-@@ -155,6 +155,13 @@ const MOTIVO_LABELS: Record<MotivoSolicitud, string> = {
-                   <div cbInput [label]="'Motivo'" [readonly]="true">
-                     <input type="text" [value]="motivoLabel()" readonly />
-                   </div>
-+                  <div cbInput
-+                    [label]="'Días de renta'"
-+                    [styleVariant]="'white-fill'"
-+                    [errorState]="submitted1 && form.controls['diasRenta'].invalid"
-+                    [errorMessage]="submitted1 && form.controls['diasRenta'].invalid ? 'Indica un número entero mayor a 0' : null">
-+                    <input id="diasRenta" type="number" min="1" step="1" formControlName="diasRenta" />
-+                  </div>
-                 </div>
-               </div>
- 
-@@ -329,6 +336,7 @@ export class CapturaInfoComponent implements OnInit {
-     tallerNombre:    [''],
-     tallerFecha:     [''],
-     tallerTelefono:  [''],
-+    diasRenta:       [1, [Validators.required, Validators.min(1), Validators.pattern(/^\d+$/)]],
-   });
- 
-   ngOnInit(): void {
-@@ -366,7 +374,7 @@ export class CapturaInfoComponent implements OnInit {
- 
-   protected irADocumentos(): void {
-     this.submitted1 = true;
--    const paso1Controls = ['nombres', 'primerApellido', 'telefono', 'email', 'municipio', 'estado', 'codigoPostal'];
-+    const paso1Controls = ['nombres', 'primerApellido', 'telefono', 'email', 'municipio', 'estado', 'codigoPostal', 'diasRenta'];
-     const paso1Invalid = paso1Controls.some(k => this.form.controls[k as keyof typeof this.form.controls].invalid);
-     if (paso1Invalid) return;
- 
-@@ -458,7 +466,7 @@ export class CapturaInfoComponent implements OnInit {
-     email: string,
-     motivoServicioId: number
-   ): void {
--    this.k2Svc.crearTicket(numSiniestro, poliza, 1, motivoServicioId, this.titularCapturado()).subscribe({
-+    this.k2Svc.crearTicket(numSiniestro, poliza, 1, motivoServicioId, this.titularCapturado(), Number(this.form.getRawValue().diasRenta)).subscribe({
-       next: (ticket) => {
-         const servicioId = ticket.ServicioAutoRelevo?.id;
- 
-@@ -479,7 +487,9 @@ export class CapturaInfoComponent implements OnInit {
+@@ -479,7 +479,9 @@ export class CapturaInfoComponent implements OnInit {
            url: err?.url,
            error: err?.error,
          });

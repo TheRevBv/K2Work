@@ -1,14 +1,14 @@
 info:
-  name: "Login K2"
+  name: Login K2
   type: http
   seq: 1
 
 http:
   method: POST
-  url: "{{baseUrl}}/api/auth/token"
+  url: "{{baseUrlDev}}/api/auth/token"
   headers:
-    - name: "Content-Type"
-      value: "application/json"
+    - name: Content-Type
+      value: application/json
   body:
     type: json
     data: |-
@@ -16,9 +16,11 @@ http:
         "email": "{{user}}",
         "password": "{{pass}}"
       }
-  auth: none
 
 runtime:
+  variables:
+    - name: baseUrlDev
+      value: https://micrositio-autorelevo-web-dot-morfeo-dev-321917.ue.r.appspot.com
   scripts:
     - type: after-response
       code: |-
