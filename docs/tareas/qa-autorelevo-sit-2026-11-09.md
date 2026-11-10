@@ -59,3 +59,53 @@ Pendiente QA/test: desplegar el `server.js` corregido en morfeo-test y actualiza
 - El código local prioriza `AVASA_API_KEY` sobre Secret Manager (`avasa-api-key`, versión `latest` del proyecto de ejecución). La llave se lee al arrancar: actualizar el secreto no refresca las instancias existentes. Confirmar `AVASA_TARGET=https://apitest.avasa.com.mx` en test.
 - Un resultado correcto valida la credencial cargada, pero no identifica por sí solo que sea la nueva: verificar la fuente efectiva y el arranque posterior a la actualización.
 - Esta revisión comprobó código y bitácora; no ejecutó la petición contra test ni verificó sus secretos/despliegue actual.
+
+## Sesión 10 nov — handoff para revisar con Codex
+
+Repos y ramas: K2-Full-Portal `CDSEBAU-57-Fix-QA-SIT-Autorelevo` (fixes A y B en commit `cc0bd193`), micrositio-autorelevo-real `CDSEBAU-39-Fix-QA-SIT`.
+Servicios dev (`morfeo-dev-321917`): admin+API K2 con fixes → `micrositio-autorelevo-2-dot-…`; micrositio web → `micrositio-autorelevo-web`, cuyo proxy `/k2portal` (`K2_PORTAL_TARGET` en `deploy/app.dev.yaml` local, fuera de git) apunta a `default/micrositio-autorelevo`, que NO tiene `cc0bd193`.
+
+### Estado rápido
+| # | Tema | Estado |
+|---|---|---|
+| A | Admin no avanza de Autorización a Asignación | Fix en `cc0bd193`; falta probar desplegado |
+| B | "No se pudo determinar la vigencia" con póliza sin inciso | Fix en `cc0bd193`; no probado: Chubb UAT caído y el web no usa `-2` |
+| C | Chubb UAT falla (siniestro 400, token 502) | Externo; reintentar |
+| D | Admin lista folios borrados (`active_record=0`) | Abierto, sin fix |
+| E | Folios cancelados muestran "Continuar" en vez de "Mostrar detalle" | Abierto, sin revisar |
+| F | TypeError al recargar `steps` (store no persiste) | Abierto, cosmético |
+| G | Dos campos "Motivo" confusos en Autorización | UX, propuesta de texto |
+
+### A. Admin no avanza de Autorización a Asignación (folio 658)
+- Síntoma: guardar con "Sí" muestra "Exito al guardar datos" pero se queda en Autorización; al recargar el radio Sí/No sale vacío.
+- BD dev correcta: boleta 661 con `evaluador_aprobo_servicio=1`, servicio "Servicio autorizado" (hoy el 658 está Finalizado).
+- Causa: `apiserver/ix/boletas_informativas/auto_relevo/api/utils/related_models.py` es la lista blanca de `serialize_servicio(include_all=False)` y no tenía `evaluador_aprobo_servicio` ni `motivo_evaluacion_servicio`. La API no los devuelve → `authorization-data-form` no rehidrata el radio y `steps.validateAuthorizationData` (`typeof … === 'boolean'`) falla → `steps` deja `redirectUrl` en Autorización.
+- Fix: agregar ambos campos (2 líneas).
+- Revisar con Codex: que nada consuma esos campos esperando su ausencia; `redirectUrl` de `steps.component.ts` nunca se limpia y compite con el `navigate` de cada formulario (`authorization-data-form.component.ts:59-67`).
+- Prueba: desplegar `-2`, abrir 658 (o un folio nuevo) desde la lista → radio en "Sí" → Guardar → debe ir a `/steps/assignment`.
+
+### B. "No se pudo determinar la vigencia de la póliza… [HTTP 400]" (póliza `BE|43027807`, siniestro `156156163244`)
+- Flujo: `create_ticket` → `_get_vigencia` → Chubb por siniestro (`typeSearch=9`) y, si no trae `FinVigencia`/`FechaFinVigencia`, por póliza (`typeSearch=3`) con `_fetch_chubb` → `validate_and_get_count` lanza 400 si `vigencia_fin` es None (`auto_relevo_events_manager.py:67`).
+- Causa: `_fetch_chubb` armaba `NumeroInciso = poliza.split('|')[-1]`; con `BE|43027807` mandaba 43027807 como inciso.
+- Fix: `clave, numero, inciso = self._parse_policy_parts(poliza)` y `NumeroInciso: inciso or ""`.
+- Revisar con Codex: qué acepta `assistancechubb/sales?typeSearch=3` sin inciso (vacío, omitido o "1"); el micrositio manda la póliza sin inciso al crear (`search-event` sí usa `BE|43027807|1`).
+- Automatización: `micrositio-autorelevo-real/autorelevo-e2e/src/qa/vigencia-sin-inciso.spec.ts` (redirige `/k2portal` a `-2` vía `API_FROM/API_TO`; falta `NUM_ASEGURADO`; no se ha corrido; deja un folio en dev si pasa).
+
+### C. Logs GCP del error de Ale (10 nov 11:11 CST)
+- `micrositio-autorelevo-web`: `POST /k2portal/.../auto-relevo/tickets` → 400.
+- K2 `default/micrositio-autorelevo` (código distinto al local: `permitir_vigencia_vencida=con_siniestro`):
+  - por siniestro: `claims.gruas/Grua/bienafectado` → 400 "Could not find stored procedure ''";
+  - por póliza: `ChubbPolicy.get_token` → 502.
+- Conclusión: falla de Chubb UAT; el fix de B no habría cambiado el resultado. Mensaje para Ale ya enviado.
+- Para que el web use los fixes: `K2_PORTAL_TARGET=https://micrositio-autorelevo-2-dot-morfeo-dev-321917.ue.r.appspot.com` y `.\deploy.ps1 dev`, o desplegar `cc0bd193` en `default/micrositio-autorelevo`.
+
+### D–G. Pendientes sin fix
+- D: `list_tickets` del admin no filtra `ServicioAutoRelevo.active_record` (el 652 borrado aparecía como abierto).
+- E: en la lista del admin, folios Cancelados muestran "Continuar"; Finalizados "Mostrar detalle".
+- F: al recargar en `/steps/*` el store está vacío, `steps.ngOnInit` hace `return` antes de `initForm` y `[formGroup]="actionForm"` (línea 587, `extra_hours`/`others_costs`) lanza 3 TypeError. No bloquea.
+- G: etiqueta "Motivo de no aprobación" y placeholder "Explica por qué no se aprobó el servicio…".
+
+### Limpieza de datos dev (10 nov)
+- 156 folios abiertos (no Finalizado/Cancelado/No autorizado, `active_record=1`) → `Cancelado` con `datos/qa-autorelevo-sit-2026-11-09/cancelar-folios-abiertos.sql`. Ninguno tenía evento activo en `autorelevo_event`, no se tocaron conteos.
+- Folio 652 (`active_record=0`, "En revisión de documentación") → `Cancelado` a mano.
+- Resultado: 0 folios abiertos en dev. Motivo: folios con errores bloqueaban nuevas solicitudes en pólizas de prueba.
