@@ -1,0 +1,836 @@
+From 2b6e1cfbeca12e0b9dcf18d772943a8651d668c2 Mon Sep 17 00:00:00 2001
+From: Joshua Morin <joshua.morinsalazar@chubb.com>
+Date: Wed, 11 Nov 2026 16:43:46 -0600
+Subject: [PATCH 2/6] feat: implement collision eligibility rules and integrate
+ with Qonect automatic assignment
+
+---
+ apiserver/ix/api/endpoints/assistancecases.py |  14 +-
+ .../ix/apps/ahio/collision_eligibility.py     | 104 ++++++
+ apiserver/ix/apps/ahio/enums.py               |   8 +
+ .../ix/apps/ahio/provider_type_eligibility.py |   7 +-
+ apiserver/ix/apps/ahio/qonect_eligibility.py  |  15 +-
+ .../ix/apps/ahio/questionnaire_validations.py |  29 +-
+ .../strategies/AutomaticClosingProcess.py     |   6 +-
+ .../tests/ahio/test_collision_eligibility.py  | 332 ++++++++++++++++++
+ .../ahio/test_provider_type_eligibility.py    |  18 +
+ .../ix/tests/automatic_closing/__init__.py    |   0
+ .../test_validate_service_id.py               |  29 ++
+ .../tools/definitions/catalog_equivalence.py  |  14 +
+ apiserver/ix/whatsApp/services/collision.py   |  36 +-
+ 13 files changed, 598 insertions(+), 14 deletions(-)
+ create mode 100644 apiserver/ix/apps/ahio/collision_eligibility.py
+ create mode 100644 apiserver/ix/apps/ahio/enums.py
+ create mode 100644 apiserver/ix/tests/ahio/test_collision_eligibility.py
+ create mode 100644 apiserver/ix/tests/ahio/test_provider_type_eligibility.py
+ create mode 100644 apiserver/ix/tests/automatic_closing/__init__.py
+ create mode 100644 apiserver/ix/tests/automatic_closing/test_validate_service_id.py
+
+diff --git a/apiserver/ix/api/endpoints/assistancecases.py b/apiserver/ix/api/endpoints/assistancecases.py
+index c7ffaa22..f14077f4 100755
+--- a/apiserver/ix/api/endpoints/assistancecases.py
++++ b/apiserver/ix/api/endpoints/assistancecases.py
+@@ -18,6 +18,7 @@ from ix.boletas_informativas.nps.nps_functions import send_informative_sheets_np
+ from ix.ofac.utils.utils import  ofac_proccess
+ from ix.whatsApp.utils.wa_nps import send_nps_by_wa
+ from ix.tools.definitions.assistance_tickets import ASSIGNED_FOLIO_LBL, SERVICE_NOT_PROVIDED
++from ix.tools.definitions.catalog_equivalence import CHUBB_PLACE_TYPES_WITHOUT_STATE_DISTRICT
+ from flask import g, request
+ from flask import make_response
+ from sqlalchemy import exists
+@@ -5139,9 +5140,12 @@ def get_location_chubb():
+                                             m.CatalogEquivalence.equivalence2_ == district.code_equivalence_chubb,
+                                             m.CatalogEquivalence.status == m.CatalogEquivalence.STATUS_ACTIVE)
+ 
++        existing_equivalences = catalog_equivalence.all()
++        default_to = existing_equivalences[0].to_ if existing_equivalences else location_chubb.to_
++
+         for catalog in chubb_destinos_catalog:
+             find = None
+-            for k2_catalog in catalog_equivalence:
++            for k2_catalog in existing_equivalences:
+                 #Verifico que el destino en el catalgo de API existe en db
+                 if k2_catalog.value_ == str(catalog["id"]):
+                     find = k2_catalog
+@@ -5150,7 +5154,7 @@ def get_location_chubb():
+             if not find:
+                 newDestination = m.CatalogEquivalence(grouper_ = 'TYPOLOGIES_CRM',
+                                                         from_ = location_chubb.id,
+-                                                        to_ = catalog_equivalence[0].to_,
++                                                        to_ = default_to,
+                                                         value_ = catalog['id'],
+                                                         equivalence_ = state.code_equivalence_chubb,
+                                                         equivalence2_ = district.code_equivalence_chubb,
+@@ -5164,7 +5168,8 @@ def get_location_chubb():
+ 
+         #lista de ID para verificar si hay destinos inactivos 
+         aux_chubb_destinos_catalog = [str(catalog["id"]) for catalog in chubb_destinos_catalog] 
+-        for k2_catalog in catalog_equivalence:
++        # Se vuelve a ejecutar la consulta para incluir los destinos recién creados
++        for k2_catalog in catalog_equivalence.all():
+             if str(k2_catalog.value_) not in aux_chubb_destinos_catalog:
+                 k2_catalog.status = m.CatalogEquivalence.STATUS_INACTIVE
+                 g.s().flush()
+@@ -5189,7 +5194,8 @@ def get_location_chubb():
+                                             m.CatalogEquivalence.equivalence_ == state.code_equivalence_chubb,
+                                             m.CatalogEquivalence.equivalence2_ == district.code_equivalence_chubb,
+                                             m.CatalogEquivalence.status == m.CatalogEquivalence.STATUS_ACTIVE)
+-        if location_chubb.value_ == 0 or 7:
++        # value_ es String: la comparación debe hacerse contra el texto del tipo de lugar
++        if str(location_chubb.value_) in CHUBB_PLACE_TYPES_WITHOUT_STATE_DISTRICT:
+             catalog_equivalence = g.s().query(m.CatalogEquivalence)\
+                                     .filter(m.CatalogEquivalence.from_ == location_chubb.id, 
+                                             m.CatalogEquivalence.equivalence_ == 0,
+diff --git a/apiserver/ix/apps/ahio/collision_eligibility.py b/apiserver/ix/apps/ahio/collision_eligibility.py
+new file mode 100644
+index 00000000..507dac5a
+--- /dev/null
++++ b/apiserver/ix/apps/ahio/collision_eligibility.py
+@@ -0,0 +1,104 @@
++"""Reglas de elegibilidad Qonect para servicios de Colisión.
++
++Origen: PPTX "Cuestionarios Colisión" (láminas 1, 3 y 7) para vehículo y
++solicitante, y el PRD de Confluence "Digital Dispatch Platform (AHIO) -
++Fase 2 Colisión No concesionado para envío a Qonect" (actualizado
++2026-08-27) para destino y grúa en el lugar — ver §5.1 "Triggers
++confirmados" y RN-06/RN-07/RN-09.
++
++Principio fail-closed (PRD §30): un valor vacío, nulo o desconocido
++bloquea el despacho automático.
++"""
++
++import re
++
++ALLOWED_VEHICLE_TYPES = frozenset({"equipo ligero"})
++
++
++def _normalize(value) -> str:
++    return (value or "").strip().lower()
++
++
++def is_vehicle_type_allowed(car_type) -> bool:
++    """Lámina 3: solo Equipo Ligero puede ir a Qonect automático."""
++    return _normalize(car_type) in ALLOWED_VEHICLE_TYPES
++
++
++BLOCKED_DESTINATION_TYPES = frozenset({"ventura"})
++
++# `destination_type` es texto libre (no un catálogo cerrado), así que la
++# lista negra por sí sola dejaría pasar basura/inyecciones como "elegible"
++# (ya vimos payloads de AppScan en pruebas). Esto no es un catálogo de
++# valores válidos, solo una forma barata de distinguir texto de catálogo
++# normal de basura evidente, sin reconstruir la lista blanca que el PRD
++# pidió eliminar.
++_MAX_DESTINATION_LENGTH = 60
++_SUSPICIOUS_DESTINATION_RE = re.compile(r'["\'<>]|://')
++
++
++def is_destination_type_allowed(destination_type) -> bool:
++    """RN-09 (PRD Fase 2 §5.2): por ahora viajan TODOS los tipos de destino.
++
++    Reemplaza la lista blanca de Fase 1.5.3 (que solo permitía Agencia,
++    Taller y Centro de Valuación) — OPS/Redes confirmaron que Corralón,
++    Tránsito Municipal, Otro y Lugar del Siniestro también viajan. La
++    única excepción vigente es Ventura, excluida hasta que OPS/Redes
++    confirmen su tratamiento (ET-01: riesgo de cancelaciones por tiempos
++    de recepción altos). Fail-closed: vacío, desconocido, o texto que no
++    luce como catálogo normal (URLs, comillas, muy largo) bloquea.
++    """
++    normalized = _normalize(destination_type)
++    if not normalized or len(normalized) > _MAX_DESTINATION_LENGTH:
++        return False
++    if _SUSPICIOUS_DESTINATION_RE.search(normalized):
++        return False
++    return normalized not in BLOCKED_DESTINATION_TYPES
++
++
++ALLOWED_APPLICANT_TYPES = frozenset({"ajustador"})
++
++
++def is_applicant_type_allowed(applicant_type) -> bool:
++    """Lámina 1: solo Ajustador puede ir a Qonect automático.
++
++    No confundir con APPRAISER ('Valuador') de
++    ix/tools/definitions/catalog_equivalence.py, que se usa para otra
++    excepción (geocercas/Morfeo) y no debe unificarse con ésta.
++    """
++    return _normalize(applicant_type) in ALLOWED_APPLICANT_TYPES
++
++
++def is_crane_absent(case) -> bool:
++    """RN-07 (PRD Fase 2 §5.1): solo viaja si la grúa NO está ya en el lugar.
++
++    `AssistanceCase.caneinsite` (sic, columna real en BD) es Boolean con
++    default=True. Por eso el fail-closed aquí es "cualquier cosa que no
++    sea explícitamente False bloquea" — un caso sin este dato capturado
++    hereda el default True y bloquea, en vez de asumir que la grúa no
++    está.
++    """
++    return getattr(case, "caneinsite", True) is False
++
++
++def is_collision_case_eligible(data: dict, case) -> tuple:
++    """Evalúa las reglas de elegibilidad de colisión.
++
++    Devuelve (elegible, motivo). El motivo es para trazabilidad: dice qué
++    regla bloqueó el despacho automático.
++    """
++    car_type = (data or {}).get("car_type")
++    if not is_vehicle_type_allowed(car_type):
++        return False, "tipo de vehículo no permitido para asignación automática"
++
++    if not is_destination_type_allowed(getattr(case, "destination_type", None)):
++        return False, "tipo de destino no permitido para asignación automática"
++
++    if not is_crane_absent(case):
++        return False, "la grúa ya se encuentra en el lugar"
++
++    sinister = getattr(case, "sinister", None)
++    applicant_type = getattr(sinister, "applicant_type", None) if sinister else None
++    if not is_applicant_type_allowed(applicant_type):
++        return False, "tipo de solicitante no permitido para asignación automática"
++
++    return True, ""
+diff --git a/apiserver/ix/apps/ahio/enums.py b/apiserver/ix/apps/ahio/enums.py
+new file mode 100644
+index 00000000..0bbb4ead
+--- /dev/null
++++ b/apiserver/ix/apps/ahio/enums.py
+@@ -0,0 +1,8 @@
++from enum import Enum
++
++
++class ManeuverType(str, Enum):
++    """Valores del combo 'Tipo de maniobra' en el cuestionario de colisión."""
++
++    BASIC = "Maniobra básica"
++    SPECIAL = "Maniobra Especial"
+diff --git a/apiserver/ix/apps/ahio/provider_type_eligibility.py b/apiserver/ix/apps/ahio/provider_type_eligibility.py
+index feb08e20..33c52dee 100644
+--- a/apiserver/ix/apps/ahio/provider_type_eligibility.py
++++ b/apiserver/ix/apps/ahio/provider_type_eligibility.py
+@@ -6,4 +6,9 @@ MANUAL_ONLY_PROVIDER_TYPES = {"concesionado", "ventura"}
+ 
+ 
+ def requires_manual_assignment(provider_type: str) -> bool:
+-    return (provider_type or "").strip().lower() in MANUAL_ONLY_PROVIDER_TYPES
++    normalized = (provider_type or "").strip().lower()
++    # Fail-closed (PRD §30): sin clasificación de proveedor no se puede
++    # decidir que es automático.
++    if not normalized:
++        return True
++    return normalized in MANUAL_ONLY_PROVIDER_TYPES
+diff --git a/apiserver/ix/apps/ahio/qonect_eligibility.py b/apiserver/ix/apps/ahio/qonect_eligibility.py
+index 098f46f4..991ed865 100644
+--- a/apiserver/ix/apps/ahio/qonect_eligibility.py
++++ b/apiserver/ix/apps/ahio/qonect_eligibility.py
+@@ -2,10 +2,11 @@
+ 
+ from flask import g
+ 
++from ix.apps.ahio.collision_eligibility import is_collision_case_eligible
+ from ix.apps.ahio.provider_type_eligibility import requires_manual_assignment
+ from ix.apps.ahio.qonect_sponsor_consistency import validate_qonect_sponsor_consistency
+ from ix.apps.ahio.questionnaire_validations import validate_qonect_questionnaire
+-from ix.apps.ahio.variables import CHATBOTS, QONECT_ALLOWED_SERVICE_IDS
++from ix.apps.ahio.variables import CHATBOTS, QONECT_ALLOWED_SERVICE_IDS, SERVICE_TRUCK_COLLISION
+ from ix.tools.utils.functions import get_sponsor_by_plan_id
+ 
+ 
+@@ -30,7 +31,17 @@ def is_eligible_for_automatic_qonect(data: dict, case) -> bool:
+     if not validate_qonect_sponsor_consistency(sponsor, data):
+         return False
+ 
+-    if g.current_user.email in CHATBOTS:
++    # Las reglas de colisión aplican a todos los orígenes, incluidos los
++    # chatbots: el atajo de abajo no debe saltárselas.
++    if service_id == SERVICE_TRUCK_COLLISION:
++        eligible, _reason = is_collision_case_eligible(data, case)
++        if not eligible:
++            return False
++
++    # El atajo de chatbots se acota por servicio: en colisión hay que seguir
++    # hasta el cuestionario, porque ahí vive la validación de maniobra
++    # especial. Los demás servicios conservan el comportamiento previo.
++    if g.current_user.email in CHATBOTS and service_id != SERVICE_TRUCK_COLLISION:
+         return True
+ 
+     return validate_qonect_questionnaire(
+diff --git a/apiserver/ix/apps/ahio/questionnaire_validations.py b/apiserver/ix/apps/ahio/questionnaire_validations.py
+index c1303914..c8365ffb 100644
+--- a/apiserver/ix/apps/ahio/questionnaire_validations.py
++++ b/apiserver/ix/apps/ahio/questionnaire_validations.py
+@@ -1,14 +1,19 @@
+ import re
+ 
++from flask import g
++
++from ix import models as m
+ from ix.apps.ahio.variables import (
+     SERVICE_CRANE,
+     SERVICE_GASOLINE,
+     SERVICE_JUMPSTART,
+     SERVICE_PLATFORM,
+     SERVICE_TIRE_CHANGE,
++    SERVICE_TRUCK_COLLISION,
+     HEAVY_EQUIPMENT_RE,
+     normalize_qonect_service_id,
+ )
++from ix.apps.ahio.enums import ManeuverType
+ 
+ TIRE_SPARE_TIRE_RE = (
+     r"1\.\s*¿La llanta de refacción esta inflada y montada en el rin "
+@@ -56,9 +61,6 @@ def _get_gasoline_type_description(gasoline_value) -> str:
+     if gasoline_value is None:
+         return ""
+ 
+-    from flask import g
+-    from ix import models as m
+-
+     item = g.s().query(m.CatalogEquivalence).filter(
+         m.CatalogEquivalence.grouper_ == "gasoline_types",
+         m.CatalogEquivalence.value_ == str(gasoline_value),
+@@ -86,6 +88,24 @@ def _validate_crane(comment: str) -> bool:
+     return not _is_heavy_equipment(comment)
+ 
+ 
++def _has_special_maneuver(case_id) -> bool:
++    if not case_id:
++        return False
++
++    return g.s().query(m.CaseExtraService).filter(
++        m.CaseExtraService.case_id == case_id,
++        m.CaseExtraService.value2 == ManeuverType.SPECIAL.value,
++    ).first() is not None
++
++
++def _validate_truck_collision(data: dict) -> bool:
++    # El tipo de vehículo se valida con la lista blanca de
++    # apps/ahio/collision_eligibility.py. Aquí solo queda la maniobra:
++    # la maniobra especial requiere envío de fotos, que Qonect aún no
++    # soporta.
++    return not _has_special_maneuver(data.get("case_id"))
++
++
+ def validate_qonect_questionnaire(service_id: int, comment: str, data: dict) -> bool:
+     """Return True when questionnaire answers allow sending the case to Qonect."""
+     comment = comment or ""
+@@ -94,6 +114,9 @@ def validate_qonect_questionnaire(service_id: int, comment: str, data: dict) ->
+     if service_id in (SERVICE_CRANE, SERVICE_PLATFORM):
+         return _validate_crane(comment)
+ 
++    if service_id == SERVICE_TRUCK_COLLISION:
++        return _validate_truck_collision(data)
++
+     if service_id == SERVICE_TIRE_CHANGE:
+         return _validate_tire_change(comment)
+ 
+diff --git a/apiserver/ix/apps/automatic_closing/strategies/AutomaticClosingProcess.py b/apiserver/ix/apps/automatic_closing/strategies/AutomaticClosingProcess.py
+index 190fe4bc..cc0b264c 100644
+--- a/apiserver/ix/apps/automatic_closing/strategies/AutomaticClosingProcess.py
++++ b/apiserver/ix/apps/automatic_closing/strategies/AutomaticClosingProcess.py
+@@ -11,6 +11,7 @@ from ix.apps.ahio.service import AhioService
+ from ix.models.assistanceprice import AssistancePrice
+ from ix.models.assistanceprovidercoverage import AssistanceProviderCoverage
+ from ix.apps.ahio.repository import AhioRepository
++from ix.apps.ahio.variables import SERVICE_TRUCK_COLLISION
+ from ix.apps.automatic_closing.strategies.domains import AutomaticClosingProcessData
+ from ix.apps.assistance_tickets.services import get_last_ticket_by_case_id_and_ticket_type
+ from ix.apps.assistance_tickets.ticket_service import TicketService
+@@ -117,7 +118,10 @@ class AutomaticClosingProcess:
+         assistance_case_ahio = repository.get_instance()
+         if assistance_case_ahio and (self.data.from_ahio_automatic_closing or self.data.from_case_canceled):
+             return True
+-        return True if self.ticket.service_id == CRANE_SERVICE_ID else False
++        # Colisión (391) entró al whitelist de Qonect después de que se
++        # escribió este gate; sin ella, el cierre manual desde el admin
++        # bloquea los casos de colisión.
++        return self.ticket.service_id in (CRANE_SERVICE_ID, SERVICE_TRUCK_COLLISION)
+     
+     def validate_status(self):
+         case = self._assistance_case
+diff --git a/apiserver/ix/tests/ahio/test_collision_eligibility.py b/apiserver/ix/tests/ahio/test_collision_eligibility.py
+new file mode 100644
+index 00000000..1f0da905
+--- /dev/null
++++ b/apiserver/ix/tests/ahio/test_collision_eligibility.py
+@@ -0,0 +1,332 @@
++from types import SimpleNamespace
++from unittest.mock import MagicMock, patch
++
++import pytest
++
++from ix.apps.ahio.collision_eligibility import (
++    is_applicant_type_allowed,
++    is_collision_case_eligible,
++    is_crane_absent,
++    is_destination_type_allowed,
++    is_vehicle_type_allowed,
++)
++from ix.apps.ahio.variables import SERVICE_TRUCK_COLLISION
++from ix.apps.ahio.enums import ManeuverType
++
++
++def _case(destination_type="Taller", applicant_type="Ajustador", caneinsite=False):
++    sinister = SimpleNamespace(applicant_type=applicant_type) if applicant_type is not None else None
++    return SimpleNamespace(destination_type=destination_type, sinister=sinister, caneinsite=caneinsite)
++
++
++class TestManeuverType:
++
++    def test_valores_del_combo_tipo_de_maniobra(self):
++        assert ManeuverType.SPECIAL.value == "Maniobra Especial"
++        assert ManeuverType.BASIC.value == "Maniobra básica"
++
++    def test_es_comparable_como_texto(self):
++        assert ManeuverType.SPECIAL == "Maniobra Especial"
++
++
++class TestVehicleTypeAllowList:
++
++    @pytest.mark.parametrize("car_type", [
++        "Equipo Ligero",
++        "equipo ligero",
++        "  EQUIPO LIGERO  ",
++    ])
++    def test_equipo_ligero_es_el_unico_permitido(self, car_type):
++        assert is_vehicle_type_allowed(car_type) is True
++
++    @pytest.mark.parametrize("car_type", [
++        "Equipo pesado",
++        "Exótico",
++        "Equipo alta gama",
++        "Grúa obra civil",
++    ])
++    def test_los_demas_tipos_bloquean(self, car_type):
++        assert is_vehicle_type_allowed(car_type) is False
++
++    @pytest.mark.parametrize("car_type", [
++        None,
++        "",
++        "   ",
++        "Equipo Ligero;",
++        "powershell+-command+Invoke-WebRequest+http://10.64.21.165:58046/AppScanMsg.html",
++    ])
++    def test_vacio_o_desconocido_bloquea_fail_closed(self, car_type):
++        assert is_vehicle_type_allowed(car_type) is False
++
++
++class TestDestinationTypeAllowList:
++
++    @pytest.mark.parametrize("destination", [
++        "Agencia",
++        "Taller",
++        "Centro de Valuación",
++        "  taller  ",
++        "Corralón de la grúa",
++        "Corralon",
++        "Tránsito Municipal",
++        "Otro",
++        "Lugar del siniestro",
++    ])
++    def test_destinos_permitidos(self, destination):
++        assert is_destination_type_allowed(destination) is True
++
++    @pytest.mark.parametrize("destination", [
++        "Ventura",
++        "ventura",
++        "  VENTURA  ",
++    ])
++    def test_destinos_bloqueados(self, destination):
++        assert is_destination_type_allowed(destination) is False
++
++    @pytest.mark.parametrize("destination", [
++        None,
++        "",
++        'Taller"\'Aooegprobevj0000FEoo\'"A',
++        "http://4466939301:58046/AppScanMsg.html?varId=12356",
++    ])
++    def test_vacio_o_desconocido_bloquea_fail_closed(self, destination):
++        assert is_destination_type_allowed(destination) is False
++
++
++class TestCraneInSite:
++
++    def test_grua_no_esta_en_el_lugar_no_bloquea(self):
++        case = _case(caneinsite=False)
++        assert is_crane_absent(case) is True
++
++    def test_grua_ya_esta_en_el_lugar_bloquea(self):
++        case = _case(caneinsite=True)
++        assert is_crane_absent(case) is False
++
++    def test_dato_no_capturado_bloquea_fail_closed(self):
++        """Sin el dato, el caso hereda el default=True de la columna real."""
++        case = _case(caneinsite=None)
++        assert is_crane_absent(case) is False
++
++    def test_caso_sin_atributo_bloquea_fail_closed(self):
++        case = SimpleNamespace(destination_type="Taller", sinister=None)
++        assert is_crane_absent(case) is False
++
++
++class TestApplicantTypeAllowList:
++
++    @pytest.mark.parametrize("applicant", ["Ajustador", "ajustador", "  AJUSTADOR "])
++    def test_ajustador_es_el_unico_permitido(self, applicant):
++        assert is_applicant_type_allowed(applicant) is True
++
++    @pytest.mark.parametrize("applicant", [
++        "Supervisor",
++        "Otro",
++        "Valuador",
++        "Área Robos",
++        "Dependencia",
++        "Pérdidas totales",
++    ])
++    def test_los_demas_solicitantes_bloquean(self, applicant):
++        assert is_applicant_type_allowed(applicant) is False
++
++    @pytest.mark.parametrize("applicant", [None, "", "   "])
++    def test_vacio_bloquea_fail_closed(self, applicant):
++        assert is_applicant_type_allowed(applicant) is False
++
++
++class TestCollisionCaseEligibility:
++
++    def test_caso_completamente_valido_es_elegible(self):
++        elegible, motivo = is_collision_case_eligible({"car_type": "Equipo Ligero"}, _case())
++        assert elegible is True
++        assert motivo == ""
++
++    def test_vehiculo_invalido_bloquea_con_motivo(self):
++        elegible, motivo = is_collision_case_eligible({"car_type": "Exótico"}, _case())
++        assert elegible is False
++        assert "vehículo" in motivo
++
++    def test_destino_invalido_bloquea_con_motivo(self):
++        elegible, motivo = is_collision_case_eligible(
++            {"car_type": "Equipo Ligero"}, _case(destination_type="Ventura")
++        )
++        assert elegible is False
++        assert "destino" in motivo
++
++    def test_grua_en_el_lugar_bloquea_con_motivo(self):
++        elegible, motivo = is_collision_case_eligible(
++            {"car_type": "Equipo Ligero"}, _case(caneinsite=True)
++        )
++        assert elegible is False
++        assert "grúa" in motivo
++
++    def test_solicitante_invalido_bloquea_con_motivo(self):
++        elegible, motivo = is_collision_case_eligible(
++            {"car_type": "Equipo Ligero"}, _case(applicant_type="Supervisor")
++        )
++        assert elegible is False
++        assert "solicitante" in motivo
++
++    def test_sin_siniestro_bloquea_fail_closed(self):
++        elegible, motivo = is_collision_case_eligible(
++            {"car_type": "Equipo Ligero"}, _case(applicant_type=None)
++        )
++        assert elegible is False
++        assert "solicitante" in motivo
++
++    def test_data_vacia_bloquea_fail_closed(self):
++        elegible, motivo = is_collision_case_eligible({}, _case())
++        assert elegible is False
++        assert "vehículo" in motivo
++
++
++class TestChatbotsNoOmitenReglasDeColision:
++    # `g` es un LocalProxy de werkzeug: hay que sustituirlo con un objeto
++    # explícito, porque el patch por defecto lo inspecciona y truena fuera
++    # del contexto de aplicación de Flask.
++
++    def test_chatbot_con_vehiculo_invalido_no_es_elegible(self):
++        from ix.apps.ahio import qonect_eligibility
++
++        data = {"service_id": SERVICE_TRUCK_COLLISION, "car_type": "Exótico"}
++        case = _case()
++        case.provider_type = "No concesionado"
++        case.assistance_plan_id = 1
++
++        sponsor = SimpleNamespace(send_to_qonect=1)
++        with patch.object(qonect_eligibility, "get_sponsor_by_plan_id", return_value=sponsor), \
++             patch.object(qonect_eligibility, "validate_qonect_sponsor_consistency", return_value=True), \
++             patch.object(qonect_eligibility, "g", MagicMock()) as fake_g:
++            fake_g.current_user.email = "chatbot.cds@chubbservicios.com"
++            assert qonect_eligibility.is_eligible_for_automatic_qonect(data, case) is False
++
++    def test_chatbot_con_caso_valido_sigue_siendo_elegible(self):
++        from ix.apps.ahio import qonect_eligibility
++
++        data = {"service_id": SERVICE_TRUCK_COLLISION, "car_type": "Equipo Ligero"}
++        case = _case()
++        case.provider_type = "No concesionado"
++        case.assistance_plan_id = 1
++
++        sponsor = SimpleNamespace(send_to_qonect=1)
++        with patch.object(qonect_eligibility, "get_sponsor_by_plan_id", return_value=sponsor), \
++             patch.object(qonect_eligibility, "validate_qonect_sponsor_consistency", return_value=True), \
++             patch.object(qonect_eligibility, "g", MagicMock()) as fake_g:
++            fake_g.current_user.email = "chatbot.cds@chubbservicios.com"
++            assert qonect_eligibility.is_eligible_for_automatic_qonect(data, case) is True
++
++    def test_chatbot_en_colision_si_llega_al_cuestionario(self):
++        """El atajo de chatbots no debe saltarse la validación de maniobra."""
++        from ix.apps.ahio import qonect_eligibility
++
++        data = {"service_id": SERVICE_TRUCK_COLLISION, "car_type": "Equipo Ligero"}
++        case = _case()
++        case.provider_type = "No concesionado"
++        case.assistance_plan_id = 1
++
++        sponsor = SimpleNamespace(send_to_qonect=1)
++        with patch.object(qonect_eligibility, "get_sponsor_by_plan_id", return_value=sponsor), \
++             patch.object(qonect_eligibility, "validate_qonect_sponsor_consistency", return_value=True), \
++             patch.object(qonect_eligibility, "validate_qonect_questionnaire", return_value=False) as fake_q, \
++             patch.object(qonect_eligibility, "g", MagicMock()) as fake_g:
++            fake_g.current_user.email = "chatbot.cds@chubbservicios.com"
++            assert qonect_eligibility.is_eligible_for_automatic_qonect(data, case) is False
++            assert fake_q.called, "el cuestionario debe evaluarse aunque sea un chatbot"
++
++    def test_chatbot_en_servicio_no_colision_conserva_el_atajo(self):
++        """Regresión: fuera de colisión el atajo sigue igual que antes."""
++        from ix.apps.ahio import qonect_eligibility
++        from ix.apps.ahio.variables import SERVICE_CRANE
++
++        data = {"service_id": SERVICE_CRANE}
++        case = _case()
++        case.provider_type = "No concesionado"
++        case.assistance_plan_id = 1
++
++        sponsor = SimpleNamespace(send_to_qonect=1)
++        with patch.object(qonect_eligibility, "get_sponsor_by_plan_id", return_value=sponsor), \
++             patch.object(qonect_eligibility, "validate_qonect_sponsor_consistency", return_value=True), \
++             patch.object(qonect_eligibility, "validate_qonect_questionnaire", return_value=False) as fake_q, \
++             patch.object(qonect_eligibility, "g", MagicMock()) as fake_g:
++            fake_g.current_user.email = "chatbot.cds@chubbservicios.com"
++            assert qonect_eligibility.is_eligible_for_automatic_qonect(data, case) is True
++            assert not fake_q.called, "fuera de colisión el chatbot no llega al cuestionario"
++
++
++class TestManiobraEnColision:
++
++    def test_maniobra_especial_bloquea(self):
++        from ix.apps.ahio import questionnaire_validations as qv
++
++        with patch.object(qv, "_has_special_maneuver", return_value=True):
++            assert qv._validate_truck_collision({"case_id": 1}) is False
++
++    def test_maniobra_basica_no_bloquea(self):
++        from ix.apps.ahio import questionnaire_validations as qv
++
++        with patch.object(qv, "_has_special_maneuver", return_value=False):
++            assert qv._validate_truck_collision({"case_id": 1}) is True
++
++    def test_sin_case_id_no_bloquea_por_maniobra(self):
++        from ix.apps.ahio import questionnaire_validations as qv
++
++        assert qv._validate_truck_collision({}) is True
++
++    def test_el_tipo_de_vehiculo_ya_no_se_valida_aqui(self):
++        """El vehículo lo cubre la lista blanca; esta función solo ve maniobra."""
++        from ix.apps.ahio import questionnaire_validations as qv
++
++        with patch.object(qv, "_has_special_maneuver", return_value=False):
++            assert qv._validate_truck_collision({"case_id": 1, "car_type": "Exótico"}) is True
++
++
++class TestCasosDePruebaPRD:
++
++    @pytest.mark.parametrize("cp, car_type, destination, applicant, esperado", [
++        ("CP-01", "Equipo Ligero", "Taller", "Ajustador", True),
++        ("CP-02", "Equipo pesado", "Taller", "Ajustador", False),
++        ("CP-03", "Exótico", "Taller", "Ajustador", False),
++        ("CP-04", "Equipo alta gama", "Taller", "Ajustador", False),
++        ("CP-05", "Grúa obra civil", "Taller", "Ajustador", False),
++        ("CP-06", "Equipo Ligero", "Agencia", "Ajustador", True),
++        ("CP-07", "Equipo Ligero", "Centro de Valuación", "Ajustador", True),
++        ("CP-08", "Equipo Ligero", "Corralón de la grúa", "Ajustador", True),
++        ("CP-09", "Equipo Ligero", "Tránsito Municipal", "Ajustador", True),
++        ("CP-10", "Equipo Ligero", "Ventura", "Ajustador", False),
++        ("CP-11", "Equipo Ligero", "Otro", "Ajustador", True),
++        ("CP-12", "Equipo Ligero", "Lugar del siniestro", "Ajustador", True),
++        ("CP-13", "Equipo Ligero", "Taller", "Supervisor", False),
++        ("CP-14", "Equipo Ligero", "Taller", "Valuador", False),
++        ("CP-15", "Equipo Ligero", "Taller", "Otro", False),
++        ("CP-16", "Equipo Ligero", "Taller", None, False),
++        ("CP-17", None, "Taller", "Ajustador", False),
++        ("CP-18", "Equipo Ligero", None, "Ajustador", False),
++    ])
++    def test_matriz_prd(self, cp, car_type, destination, applicant, esperado):
++        elegible, _motivo = is_collision_case_eligible(
++            {"car_type": car_type}, _case(destination_type=destination, applicant_type=applicant)
++        )
++        assert elegible is esperado, cp
++
++
++class TestPensionNoBloquea:
++
++    def test_pension_no_es_criterio_de_elegibilidad(self):
++        """La pensión viene en el cuestionario de colisión: no bloquea."""
++        elegible, motivo = is_collision_case_eligible(
++            {"car_type": "Equipo Ligero", "extra_services": [{"comment1": "Pensión"}]},
++            _case(destination_type="Taller", applicant_type="Ajustador"),
++        )
++        assert elegible is True
++        assert motivo == ""
++
++    def test_las_listas_blancas_no_mencionan_pension(self):
++        from ix.apps.ahio.collision_eligibility import (
++            ALLOWED_APPLICANT_TYPES,
++            BLOCKED_DESTINATION_TYPES,
++            ALLOWED_VEHICLE_TYPES,
++        )
++
++        todas = ALLOWED_VEHICLE_TYPES | BLOCKED_DESTINATION_TYPES | ALLOWED_APPLICANT_TYPES
++        assert not any("pensión" in v or "pension" in v for v in todas)
+diff --git a/apiserver/ix/tests/ahio/test_provider_type_eligibility.py b/apiserver/ix/tests/ahio/test_provider_type_eligibility.py
+new file mode 100644
+index 00000000..abc3f720
+--- /dev/null
++++ b/apiserver/ix/tests/ahio/test_provider_type_eligibility.py
+@@ -0,0 +1,18 @@
++import pytest
++
++from ix.apps.ahio.provider_type_eligibility import requires_manual_assignment
++
++
++class TestRequiresManualAssignment:
++
++    @pytest.mark.parametrize("provider_type", ["Concesionado", "concesionado", "Ventura", " VENTURA "])
++    def test_concesionado_y_ventura_requieren_manual(self, provider_type):
++        assert requires_manual_assignment(provider_type) is True
++
++    @pytest.mark.parametrize("provider_type", ["No concesionado", "no concesionado"])
++    def test_no_concesionado_puede_ir_automatico(self, provider_type):
++        assert requires_manual_assignment(provider_type) is False
++
++    @pytest.mark.parametrize("provider_type", [None, "", "   "])
++    def test_vacio_requiere_manual_fail_closed(self, provider_type):
++        assert requires_manual_assignment(provider_type) is True
+diff --git a/apiserver/ix/tests/automatic_closing/__init__.py b/apiserver/ix/tests/automatic_closing/__init__.py
+new file mode 100644
+index 00000000..e69de29b
+diff --git a/apiserver/ix/tests/automatic_closing/test_validate_service_id.py b/apiserver/ix/tests/automatic_closing/test_validate_service_id.py
+new file mode 100644
+index 00000000..282d607f
+--- /dev/null
++++ b/apiserver/ix/tests/automatic_closing/test_validate_service_id.py
+@@ -0,0 +1,29 @@
++from types import SimpleNamespace
++from unittest.mock import patch
++
++import pytest
++
++from ix.apps.automatic_closing.strategies import AutomaticClosingProcess as module
++from ix.apps.automatic_closing.strategies.AutomaticClosingProcess import AutomaticClosingProcess
++
++
++def _process(service_id):
++    process = AutomaticClosingProcess.__new__(AutomaticClosingProcess)
++    process.data = SimpleNamespace(
++        case_id=1, from_ahio_automatic_closing=False, from_case_canceled=False
++    )
++    process.ticket = SimpleNamespace(service_id=service_id)
++    return process
++
++
++class TestValidateServiceId:
++
++    @pytest.mark.parametrize("service_id, expected", [
++        (332, True),   # grúa tradicional: comportamiento previo, sin cambios
++        (391, True),   # colisión: lo que arregla este cambio
++        (333, False),  # cambio de llanta: sigue bloqueado
++    ])
++    def test_servicios_permitidos_para_cierre_automatico(self, service_id, expected):
++        with patch.object(module, "AhioRepository") as repo:
++            repo.return_value.get_instance.return_value = None
++            assert _process(service_id).validate_service_id() is expected
+diff --git a/apiserver/ix/tools/definitions/catalog_equivalence.py b/apiserver/ix/tools/definitions/catalog_equivalence.py
+index 92f520e3..4f733aa9 100644
+--- a/apiserver/ix/tools/definitions/catalog_equivalence.py
++++ b/apiserver/ix/tools/definitions/catalog_equivalence.py
+@@ -5,6 +5,20 @@ VALUATION_CENTER = "Centro de Valuación"
+ 
+ APPRAISER = "Valuador"
+ 
++# Raíz del catálogo de tipos de lugar de destino Chubb (TYPOLOGIES_CRM, from_ IS NULL).
++CHUBB_DESTINATION_PLACE_TYPE_ROOT = "catalog_destination_chubb_sinister"
++
++# Hijo "NO ENCONTRADO" bajo esa raíz (y bajo sí mismo, para la subtipología).
++CHUBB_PLACE_TYPE_NOT_FOUND = "0"
++
++# Tipos de lugar bajo esa raíz cuyo catálogo de destinos NO depende de
++# estado/municipio (por eso get_location_chubb los busca con
++# equivalence_=0, equivalence2_=0 en vez de por código de estado/municipio):
++# "0" NO ENCONTRADO y "7" Lugar del Siniestro. Verificado en BD dev
++# (catalog_equivalence.from_ = 16600): "7" NO es un sentinel de vacío, es
++# un tipo de destino real y frecuente (98 casos históricos de colisión).
++CHUBB_PLACE_TYPES_WITHOUT_STATE_DISTRICT = frozenset({"0", "7"})
++
+ LIMIT_FEE_CONCESIONED = "limit_fee_for_concesioned"
+ BILLING_FEE_CDS = "billing_fee_cds"
+ 
+diff --git a/apiserver/ix/whatsApp/services/collision.py b/apiserver/ix/whatsApp/services/collision.py
+index 1b11f20c..90981b92 100644
+--- a/apiserver/ix/whatsApp/services/collision.py
++++ b/apiserver/ix/whatsApp/services/collision.py
+@@ -21,6 +21,11 @@ from ix.enums.member import ChubbPolicyStatusEnum
+ from ix.enums.assistance import AssistanceTypeSearchEnum
+ from ix.enums.assistance_service import AssistanceTypeServiceEnum
+ from ix.enums.catalog_equivalence import AdditionalServiceEnum #QUITAR EN CAMBIOS NUEVOS DE CONCESIONADO
++from ix.tools.definitions.catalog_equivalence import (
++    CHUBB_DESTINATION_PLACE_TYPE_ROOT,
++    CHUBB_PLACE_TYPE_NOT_FOUND,
++    TYPOLOGIES_CRM,
++)
+ from ix.whatsApp.utils.utils import get_location_by_coordinates
+ 
+ 
+@@ -404,12 +409,37 @@ def create_assistance_case(data) -> models.AssistanceCase:
+     create_assistance_case_data["attachment_ids"] = []
+     create_assistance_case_data["sinister_vehicle_id"] = vehicle.id
+     
+-    ## HARCODED MIENTRAS SE DEFINE
++    ## HARCODED MIENTRAS SE DEFINE el destino real.
++    ## Se resuelve por llave de negocio y no por PK: los ids de
++    ## catalog_equivalence no son los mismos entre dev y prod.
++    CE = models.CatalogEquivalence
++
++    chubb_places_root = g.s().query(CE).filter(
++        CE.grouper_ == TYPOLOGIES_CRM,
++        CE.from_ == None,
++        CE.value_ == CHUBB_DESTINATION_PLACE_TYPE_ROOT,
++        CE.status == CE.STATUS_ACTIVE,
++    ).first()
++
++    not_found_typology = g.s().query(CE).filter(
++        CE.grouper_ == TYPOLOGIES_CRM,
++        CE.from_ == chubb_places_root.id,
++        CE.value_ == CHUBB_PLACE_TYPE_NOT_FOUND,
++        CE.status == CE.STATUS_ACTIVE,
++    ).first() if chubb_places_root else None
++
++    not_found_subtypology = g.s().query(CE).filter(
++        CE.grouper_ == TYPOLOGIES_CRM,
++        CE.from_ == not_found_typology.id,
++        CE.value_ == CHUBB_PLACE_TYPE_NOT_FOUND,
++        CE.status == CE.STATUS_ACTIVE,
++    ).first() if not_found_typology else None
++
+     create_assistance_case_data["destination_type_chubb_typology"] = (
+-        22192  # NO ENCONTRADO
++        not_found_typology.id if not_found_typology else None
+     )
+     create_assistance_case_data["destination_type_chubb_subtypology"] = (
+-        22193  # NO ENCONTRADO
++        not_found_subtypology.id if not_found_subtypology else None
+     )
+     
+     try:
+-- 
+2.56.0
+

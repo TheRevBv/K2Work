@@ -1,0 +1,80 @@
+From fd6f38b2b129b05600b6a519d4d0eabdd6a09071 Mon Sep 17 00:00:00 2001
+From: Joshua Morin <joshua.morinsalazar@chubb.com>
+Date: Wed, 11 Nov 2026 16:43:46 -0600
+Subject: [PATCH 6/6] =?UTF-8?q?feat:=20habilitar=20servicio=20391=20(colis?=
+ =?UTF-8?q?i=C3=B3n)=20en=20Qonect=20con=20tipoServicio=202=20(Siniestro)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ apiserver/ix/apps/ahio/variables.py       | 21 ++++++++++-----------
+ apiserver/ix/tests/ahio/test_variables.py |  4 ++--
+ 2 files changed, 12 insertions(+), 13 deletions(-)
+
+diff --git a/apiserver/ix/apps/ahio/variables.py b/apiserver/ix/apps/ahio/variables.py
+index eeb0a87d..62868e2b 100644
+--- a/apiserver/ix/apps/ahio/variables.py
++++ b/apiserver/ix/apps/ahio/variables.py
+@@ -17,7 +17,7 @@ SERVICE_JUMPSTART = 334
+ SERVICE_GASOLINE = 335
+ SERVICE_LOCKSMITH = 336
+ SERVICE_PLATFORM = 487
+-#SERVICE_TRUCK_COLLISION = 391
++SERVICE_TRUCK_COLLISION = 391
+ 
+ # Sura auxilio vial (assistance_service rows used by Sura plans).
+ SURA_SERVICE_CRANE_LOCAL = 487
+@@ -43,7 +43,7 @@ QONECT_ALLOWED_SERVICE_IDS = {
+     SERVICE_GASOLINE,
+     SERVICE_LOCKSMITH,
+     *QONECT_SERVICE_ID_ALIASES.keys(),
+-    #SERVICE_TRUCK_COLLISION,
++    SERVICE_TRUCK_COLLISION,
+ }
+ 
+ # tipoServicio + relacionServicios según catálogo Qonect (servicio-propuesto).
+@@ -90,15 +90,14 @@ QONECT_SERVICE_TYPE_MAP = {
+             "nombreServicio": "CERRAJERÍA",
+         },
+     },
+-    #SERVICE_TRUCK_COLLISION: {
+-        # Misma config que SERVICE_CRANE: para AHIO es el mismo tipo de servicio (grúa).
+-        # Validar en sandbox de AHIO antes de habilitar en producción.
+-    #    "tipoServicio": 1,
+-    #    "relacionServicios": {
+-    #        "idTipoServicio": 1,
+-    #        "nombreServicio": "PLATAFORMA",
+-    #    },
+-    #},
++    SERVICE_TRUCK_COLLISION: {
++        # Contrato Qonect: colisión viaja como tipoServicio 2 (Siniestro), no 1 (Asistencia).
++        "tipoServicio": 2,
++        "relacionServicios": {
++            "idTipoServicio": 1,
++            "nombreServicio": "PLATAFORMA",
++        },
++    },
+ }
+ 
+ 
+diff --git a/apiserver/ix/tests/ahio/test_variables.py b/apiserver/ix/tests/ahio/test_variables.py
+index 295b185e..beb81256 100644
+--- a/apiserver/ix/tests/ahio/test_variables.py
++++ b/apiserver/ix/tests/ahio/test_variables.py
+@@ -104,10 +104,10 @@ class TestCollisionServiceMapping:
+     def test_truck_collision_in_allowed_service_ids(self):
+         assert SERVICE_TRUCK_COLLISION in QONECT_ALLOWED_SERVICE_IDS
+ 
+-    def test_truck_collision_qonect_config_matches_crane(self):
++    def test_truck_collision_qonect_config_is_siniestro(self):
+         config = get_qonect_service_config(SERVICE_TRUCK_COLLISION)
+         assert config == {
+-            "tipoServicio": 1,
++            "tipoServicio": 2,
+             "relacionServicios": {
+                 "idTipoServicio": 1,
+                 "nombreServicio": "PLATAFORMA",
+-- 
+2.56.0
+

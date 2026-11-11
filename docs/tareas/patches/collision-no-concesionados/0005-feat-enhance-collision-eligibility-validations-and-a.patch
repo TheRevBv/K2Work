@@ -1,0 +1,339 @@
+From aaf29ac647d7ee3d6fca9eb8b4ed8f8ca493c4d5 Mon Sep 17 00:00:00 2001
+From: Joshua Morin <joshua.morinsalazar@chubb.com>
+Date: Wed, 11 Nov 2026 16:43:46 -0600
+Subject: [PATCH 5/6] feat: enhance collision eligibility validations and add
+ new test cases
+
+---
+ .../ix/apps/ahio/collision_eligibility.py     | 15 ++++
+ .../ix/apps/ahio/questionnaire_validations.py | 76 +++++++++++++++++--
+ .../apps/ahio/strategies/propose_service.py   |  2 +-
+ apiserver/ix/apps/ahio/variables.py           |  2 +-
+ apiserver/ix/svc/assistanceticket.py          |  2 +-
+ .../tests/ahio/test_collision_eligibility.py  | 35 +++++++--
+ .../ahio/test_questionnaire_validations.py    | 70 +++++++++++++++++
+ 7 files changed, 188 insertions(+), 14 deletions(-)
+
+diff --git a/apiserver/ix/apps/ahio/collision_eligibility.py b/apiserver/ix/apps/ahio/collision_eligibility.py
+index 81a3f1eb..fe84c56e 100644
+--- a/apiserver/ix/apps/ahio/collision_eligibility.py
++++ b/apiserver/ix/apps/ahio/collision_eligibility.py
+@@ -8,6 +8,21 @@ confirmados" y RN-06/RN-07/RN-09.
+ 
+ Principio fail-closed (PRD §30): un valor vacío, nulo o desconocido
+ bloquea el despacho automático.
++
++PENDIENTE DE DEFINICIÓN DE NEGOCIO (matriz QA 2026-09-04, no implementar
++sin confirmación explícita, mismo criterio que Ventura en
++BLOCKED_DESTINATION_TYPES):
++- CP-20 a CP-26: `location_type` / "Ubicación actual-Tipo de localización"
++  (Crucero, Carretera, Cita/Visita, Oficina, MP/Tránsito, Administrativo)
++  — el PRD dice conservar todos los triggers existentes del canal
++  tradicional de K2 hasta que confirmen el cambio.
++- CP-45: estado del vehículo "Pérdida total evidente" — debe viajar hoy,
++  sin regla nueva.
++- CP-46 a CP-50: destino sensible de Ventura en notas, catálogo de
++  ubicación desactualizado, tipo de unidad en Ajuste Móvil, preguntas
++  adicionales (4 llantas/neutral/blindado) y sección repetida de tipo de
++  proveedor — sin regla de negocio definida todavía; ver la matriz QA
++  para el detalle de cada uno antes de tocar código.
+ """
+ 
+ import re
+diff --git a/apiserver/ix/apps/ahio/questionnaire_validations.py b/apiserver/ix/apps/ahio/questionnaire_validations.py
+index c8365ffb..96329069 100644
+--- a/apiserver/ix/apps/ahio/questionnaire_validations.py
++++ b/apiserver/ix/apps/ahio/questionnaire_validations.py
+@@ -1,4 +1,5 @@
+ import re
++import unicodedata
+ 
+ from flask import g
+ 
+@@ -26,12 +27,41 @@ JUMPSTART_SUFFICIENT_RE = (
+     r"para que arranque su vehículo\?\s*(Si|No)"
+ )
+ 
++VEHICLE_FRONT_FACING_RE = r"(?:\d+\.\s*)?¿El frente del vehículo esta hacia alguna\?\s*(.+?)(?:\n|$)"
++
++# El label del dropdown Angular (pregunta7siniestro) es "Pared/obstrucción",
++# pero los datos reales (casos 66691 y 66726, confirmados en DB 2026-09-07)
++# guardan el cuestionario con la respuesta como "Pared" a secas — el flujo de
++# "Boleta creada por operador" no manda el label completo. Se compara con
++# startswith("pared") tras normalizar para cubrir ambas variantes sin
++# depender de cuál llegue.
++
++VEHICLE_LOCATION_RE = r"(?:\d+\.\s*)?¿Dónde se encuentra el vehículo\?\s*(.+?)(?:\n|$)"
++VEHICLE_CARGO_RE = r"(?:\d+\.\s*)?¿Tiene algún tipo de carga\?\s*(Si|No|Sí)"
++
+ 
+ def _match_group(pattern: str, comment: str, flags=re.IGNORECASE | re.DOTALL):
+     match = re.search(pattern, comment, flags)
+     return match.group(1) if match else None
+ 
+ 
++def _normalize_no_accents(value: str) -> str:
++    normalized = unicodedata.normalize("NFD", value or "")
++    return normalized.encode("ascii", "ignore").decode("ascii").strip().lower()
++
++
++# Texto real de la opción en el formulario Angular (pregunta5siniestro):
++# "Estacionamiento – Nivel" (en-dash, con espacios) — no "Estacionamiento/Nivel"
++# ni "Estacionamiento" a secas. "Barranco" y "Túnel" también son opciones
++# reales de este campo pero QA no las marcó como bloqueantes: se dejan
++# fuera del set (fail-open) hasta tener evidencia o definición de negocio.
++# Nota (discrepancia detectada vs. plan): el literal "estacionamiento – nivel"
++# no matcheaba tras _normalize_no_accents porque el en-dash se elimina por
++# completo al codificar a ascii (no es un acento NFD) — se normaliza el
++# valor real aquí mismo para que la comparación sea consistente.
++BLOCKED_VEHICLE_LOCATIONS = {_normalize_no_accents("Estacionamiento – Nivel")}
++
++
+ def _is_heavy_equipment(comment: str) -> bool:
+     match_group = _match_group(HEAVY_EQUIPMENT_RE, comment) or ""
+     return match_group.lower() in {"si", "sí", "yes"}
+@@ -98,12 +128,46 @@ def _has_special_maneuver(case_id) -> bool:
+     ).first() is not None
+ 
+ 
+-def _validate_truck_collision(data: dict) -> bool:
++def _validate_vehicle_front_facing(comment: str) -> bool:
++    """RN colisión (QA CP-32/CP-33): "Pared" (o "Pared/obstrucción") bloquea,
++    cualquier otra respuesta (incluida ausencia de la pregunta) no bloquea."""
++    facing = _match_group(VEHICLE_FRONT_FACING_RE, comment)
++    if facing is None:
++        return True
++    return not _normalize_no_accents(facing).startswith("pared")
++
++
++def _validate_vehicle_location(comment: str) -> bool:
++    """RN colisión (QA CP-34 a CP-37): "Estacionamiento – Nivel" bloquea."""
++    location = _match_group(VEHICLE_LOCATION_RE, comment)
++    if location is None:
++        return True
++    return _normalize_no_accents(location) not in BLOCKED_VEHICLE_LOCATIONS
++
++
++def _validate_vehicle_cargo(comment: str) -> bool:
++    """RN colisión (QA CP-38/CP-39): transportar carga bloquea."""
++    cargo = _match_group(VEHICLE_CARGO_RE, comment)
++    if cargo is None:
++        return True
++    return _normalize_no_accents(cargo) != "si"
++
++
++def _validate_truck_collision(comment: str, data: dict) -> bool:
+     # El tipo de vehículo se valida con la lista blanca de
+-    # apps/ahio/collision_eligibility.py. Aquí solo queda la maniobra:
+-    # la maniobra especial requiere envío de fotos, que Qonect aún no
+-    # soporta.
+-    return not _has_special_maneuver(data.get("case_id"))
++    # apps/ahio/collision_eligibility.py. Aquí queda la maniobra (requiere
++    # fotos que Qonect aún no soporta) y las respuestas del cuestionario
++    # de colisión que sí bloquean (QA CP-32 a CP-39): frente hacia pared,
++    # vehículo en estacionamiento/nivel, o con carga.
++    if _has_special_maneuver(data.get("case_id")):
++        return False
++    if not _validate_vehicle_front_facing(comment):
++        return False
++    if not _validate_vehicle_location(comment):
++        return False
++    if not _validate_vehicle_cargo(comment):
++        return False
++    return True
+ 
+ 
+ def validate_qonect_questionnaire(service_id: int, comment: str, data: dict) -> bool:
+@@ -115,7 +179,7 @@ def validate_qonect_questionnaire(service_id: int, comment: str, data: dict) ->
+         return _validate_crane(comment)
+ 
+     if service_id == SERVICE_TRUCK_COLLISION:
+-        return _validate_truck_collision(data)
++        return _validate_truck_collision(comment, data)
+ 
+     if service_id == SERVICE_TIRE_CHANGE:
+         return _validate_tire_change(comment)
+diff --git a/apiserver/ix/apps/ahio/strategies/propose_service.py b/apiserver/ix/apps/ahio/strategies/propose_service.py
+index 89b216bc..cfe3a985 100644
+--- a/apiserver/ix/apps/ahio/strategies/propose_service.py
++++ b/apiserver/ix/apps/ahio/strategies/propose_service.py
+@@ -123,7 +123,7 @@ class ProposeService(AHIOStrategyInterface, AHIOProviderAssignmentBuilder):
+                 )
+             return ProviderAssignmentResult(
+                 success=False,
+-                message=AhioMessages.NOT_PROVIDERS_IN_K2.format(str(self.assistance_case.id))
++                message=AhioMessages.NOT_PROVIDERS_IN_K2.format(str(self.assistance_case.id), sap_code)
+             )
+         last_ticket = get_last_ticket_by_case_id(case_id=self.assistance_case.id, session=self._session)
+         user_qonect = get_user_by_username(USERNAME_AHIO, session=self._session)
+diff --git a/apiserver/ix/apps/ahio/variables.py b/apiserver/ix/apps/ahio/variables.py
+index d835dd3c..eeb0a87d 100644
+--- a/apiserver/ix/apps/ahio/variables.py
++++ b/apiserver/ix/apps/ahio/variables.py
+@@ -118,7 +118,7 @@ class AhioMessages:
+     NOT_PROVIDERS = "No existen gruas que cumplan con el tiempo de calidad establecido"
+     ERROR_ACCEPT_SERVICE = "Error al confirmar servicio con AHIO"
+     ERROR_NOT_VALID_RESPONSE = "No hay una respuesta válida de AHIO"
+-    NOT_PROVIDERS_IN_K2 = "No se encontró un proveedor en K2 para caso {}"
++    NOT_PROVIDERS_IN_K2 = "No se encontró un proveedor en K2 para caso {} (sap_code Qonect: {})"
+ 
+ 
+ class AhioMessageLogs:
+diff --git a/apiserver/ix/svc/assistanceticket.py b/apiserver/ix/svc/assistanceticket.py
+index 73fe45a0..5d96dcdc 100644
+--- a/apiserver/ix/svc/assistanceticket.py
++++ b/apiserver/ix/svc/assistanceticket.py
+@@ -894,7 +894,7 @@ def _ahio_propose_service_worker(main_ticket_id, case_id, data, sponsor_name, ge
+                     logging.exception(f"[AHIO] Error al carga datos iniciales case_id={case_id}: {e}")
+ 
+             else:
+-                logging.warning(f"[AHIO] case_id={case_id} rechazado — activando fallback Geocercas")
++                logging.warning(f"[AHIO] case_id={case_id} rechazado — activando fallback Geocercas — motivo: {result.message}")
+                 if geocercas_payload:
+                     _ahio_geocercas_fallback(case_id, geocercas_payload, session)
+         except Exception as e:
+diff --git a/apiserver/ix/tests/ahio/test_collision_eligibility.py b/apiserver/ix/tests/ahio/test_collision_eligibility.py
+index 1daed2d3..cd8f90a3 100644
+--- a/apiserver/ix/tests/ahio/test_collision_eligibility.py
++++ b/apiserver/ix/tests/ahio/test_collision_eligibility.py
+@@ -258,25 +258,25 @@ class TestManiobraEnColision:
+         from ix.apps.ahio import questionnaire_validations as qv
+ 
+         with patch.object(qv, "_has_special_maneuver", return_value=True):
+-            assert qv._validate_truck_collision({"case_id": 1}) is False
++            assert qv._validate_truck_collision("", {"case_id": 1}) is False
+ 
+     def test_maniobra_basica_no_bloquea(self):
+         from ix.apps.ahio import questionnaire_validations as qv
+ 
+         with patch.object(qv, "_has_special_maneuver", return_value=False):
+-            assert qv._validate_truck_collision({"case_id": 1}) is True
++            assert qv._validate_truck_collision("", {"case_id": 1}) is True
+ 
+     def test_sin_case_id_no_bloquea_por_maniobra(self):
+         from ix.apps.ahio import questionnaire_validations as qv
+ 
+-        assert qv._validate_truck_collision({}) is True
++        assert qv._validate_truck_collision("", {}) is True
+ 
+     def test_el_tipo_de_vehiculo_ya_no_se_valida_aqui(self):
+-        """El vehículo lo cubre la lista blanca; esta función solo ve maniobra."""
++        """El vehículo lo cubre la lista blanca; esta función solo ve maniobra y cuestionario."""
+         from ix.apps.ahio import questionnaire_validations as qv
+ 
+         with patch.object(qv, "_has_special_maneuver", return_value=False):
+-            assert qv._validate_truck_collision({"case_id": 1, "car_type": "Exótico"}) is True
++            assert qv._validate_truck_collision("", {"case_id": 1, "car_type": "Exótico"}) is True
+ 
+ 
+ class TestCasosDePruebaPRD:
+@@ -328,3 +328,28 @@ class TestPensionNoBloquea:
+ 
+         todas = ALLOWED_VEHICLE_TYPES | BLOCKED_DESTINATION_TYPES | ALLOWED_APPLICANT_TYPES
+         assert not any("pensión" in v or "pension" in v for v in todas)
++
++
++class TestReglasPendientesDeDefinicionNoBloquean:
++    """QA CP-20 a CP-26, CP-45 a CP-50: sin definición final de negocio.
++    Estos tests fijan que hoy NO bloquean — si alguien agrega una regla de
++    location_type o de estado del vehículo sin confirmación de negocio,
++    estos tests avisan del cambio de comportamiento."""
++
++    @pytest.mark.parametrize("location_type", [
++        "Crucero", "Carretera", "Cita/Visita", "Oficina",
++        "MP/Tránsito", "Administrativo", "Estacionamiento/Nivel",
++    ])
++    def test_location_type_no_es_criterio_hoy(self, location_type):
++        case = _case(destination_type="Taller", applicant_type="Ajustador")
++        case.location_type = location_type
++        elegible, motivo = is_collision_case_eligible({"car_type": "Equipo Ligero"}, case)
++        assert elegible is True
++        assert motivo == ""
++
++    def test_perdida_total_no_es_criterio_hoy(self):
++        case = _case(destination_type="Taller", applicant_type="Ajustador")
++        case.vehicle_state = "Pérdida total evidente"
++        elegible, motivo = is_collision_case_eligible({"car_type": "Equipo Ligero"}, case)
++        assert elegible is True
++        assert motivo == ""
+diff --git a/apiserver/ix/tests/ahio/test_questionnaire_validations.py b/apiserver/ix/tests/ahio/test_questionnaire_validations.py
+index 44c2a4a6..c1b943df 100644
+--- a/apiserver/ix/tests/ahio/test_questionnaire_validations.py
++++ b/apiserver/ix/tests/ahio/test_questionnaire_validations.py
+@@ -73,3 +73,73 @@ class TestQuestionnaireValidations:
+     def test_gasoline_diesel_without_heavy_equipment_allows_qonect(self):
+         comment = "5. Tipo de gasolina: Diesel"
+         assert validate_qonect_questionnaire(SERVICE_GASOLINE, comment, {}) is True
++
++    @pytest.mark.parametrize(
++        "comment, expected",
++        [
++            ("3. ¿El frente del vehículo esta hacia alguna? Área abierta", True),
++            ("3. ¿El frente del vehículo esta hacia alguna? Pared", False),  # caso real 66691/66726
++            ("3. ¿El frente del vehículo esta hacia alguna? pared", False),
++            ("3. ¿El frente del vehículo esta hacia alguna? Pared/obstrucción", False),  # label del dropdown
++            ("3. ¿El frente del vehículo esta hacia alguna? pared/obstrucción", False),
++            ("", True),  # pregunta ausente: no bloquea (ver Task 1 del plan, principio fail-open aquí)
++        ],
++    )
++    def test_collision_frente_del_vehiculo(self, comment, expected):
++        from ix.apps.ahio.questionnaire_validations import _validate_vehicle_front_facing
++        assert _validate_vehicle_front_facing(comment) is expected
++
++    @pytest.mark.parametrize(
++        "comment, expected",
++        [
++            ("2. ¿Dónde se encuentra el vehículo? Vía Pública", True),
++            ("2. ¿Dónde se encuentra el vehículo? Carretera", True),
++            ("2. ¿Dónde se encuentra el vehículo? Domicilio", True),
++            ("2. ¿Dónde se encuentra el vehículo? Barranco", True),  # opción real, no probada por QA — fail-open
++            ("2. ¿Dónde se encuentra el vehículo? Túnel", True),  # opción real, no probada por QA — fail-open
++            ("2. ¿Dónde se encuentra el vehículo? Estacionamiento – Nivel", False),
++            ("", True),
++        ],
++    )
++    def test_collision_donde_se_encuentra_el_vehiculo(self, comment, expected):
++        from ix.apps.ahio.questionnaire_validations import _validate_vehicle_location
++        assert _validate_vehicle_location(comment) is expected
++
++    @pytest.mark.parametrize(
++        "comment, expected",
++        [
++            ("4. ¿Tiene algún tipo de carga? No", True),
++            ("4. ¿Tiene algún tipo de carga? Si", False),
++            ("4. ¿Tiene algún tipo de carga? Sí", False),
++            ("", True),
++        ],
++    )
++    def test_collision_transporta_carga(self, comment, expected):
++        from ix.apps.ahio.questionnaire_validations import _validate_vehicle_cargo
++        assert _validate_vehicle_cargo(comment) is expected
++
++    def test_collision_cuestionario_completo_viaja(self):
++        """Caso real 66716: las 6 respuestas del cuestionario, ninguna bloquea."""
++        from ix.apps.ahio.questionnaire_validations import validate_qonect_questionnaire
++        from ix.apps.ahio.variables import SERVICE_TRUCK_COLLISION
++        comment = (
++            "\n1. Tipo de impacto: Lateral"
++            "\n2. ¿Dónde se encuentra el vehículo? Vía Pública"
++            "\n3. ¿El frente del vehículo esta hacia alguna? Área abierta"
++            "\n4. ¿Tiene algún tipo de carga? No"
++            "\n5. ¿Giran las 4 llantas? Si"
++            "\n6. ¿Se puede poner en neutral? Si\n    "
++        )
++        assert validate_qonect_questionnaire(SERVICE_TRUCK_COLLISION, comment, {"case_id": None}) is True
++
++    def test_collision_cuestionario_pared_bloquea_end_to_end(self):
++        """QA CP-33 (folio 66691): pared/obstrucción debe bloquear incluso con el resto de triggers en orden."""
++        from ix.apps.ahio.questionnaire_validations import validate_qonect_questionnaire
++        from ix.apps.ahio.variables import SERVICE_TRUCK_COLLISION
++        comment = (
++            "\n1. Tipo de impacto: Lateral"
++            "\n2. ¿Dónde se encuentra el vehículo? Vía Pública"
++            "\n3. ¿El frente del vehículo esta hacia alguna? Pared/obstrucción"
++            "\n4. ¿Tiene algún tipo de carga? No"
++        )
++        assert validate_qonect_questionnaire(SERVICE_TRUCK_COLLISION, comment, {"case_id": None}) is False
+-- 
+2.56.0
+

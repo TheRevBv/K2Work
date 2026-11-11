@@ -1,0 +1,77 @@
+From 8087a4a62488bbe4e9319a91c2bb957357b343a6 Mon Sep 17 00:00:00 2001
+From: Joshua Morin <joshua.morinsalazar@chubb.com>
+Date: Wed, 11 Nov 2026 16:43:46 -0600
+Subject: [PATCH 1/6] feat: add Qonect eligibility entry point and provider
+ type rule
+
+---
+ .../ix/apps/ahio/provider_type_eligibility.py |  9 +++++
+ apiserver/ix/apps/ahio/qonect_eligibility.py  | 40 +++++++++++++++++++
+ 2 files changed, 49 insertions(+)
+ create mode 100644 apiserver/ix/apps/ahio/provider_type_eligibility.py
+ create mode 100644 apiserver/ix/apps/ahio/qonect_eligibility.py
+
+diff --git a/apiserver/ix/apps/ahio/provider_type_eligibility.py b/apiserver/ix/apps/ahio/provider_type_eligibility.py
+new file mode 100644
+index 00000000..feb08e20
+--- /dev/null
++++ b/apiserver/ix/apps/ahio/provider_type_eligibility.py
+@@ -0,0 +1,9 @@
++"""Regla de negocio: qué tipos de proveedor pueden asignarse automáticamente."""
++
++# Tipos de proveedor que siempre requieren asignación manual em colision, sin importar el
++# canal que haya creado el caso. Solo "No concesionado" puede ir automático.
++MANUAL_ONLY_PROVIDER_TYPES = {"concesionado", "ventura"}
++
++
++def requires_manual_assignment(provider_type: str) -> bool:
++    return (provider_type or "").strip().lower() in MANUAL_ONLY_PROVIDER_TYPES
+diff --git a/apiserver/ix/apps/ahio/qonect_eligibility.py b/apiserver/ix/apps/ahio/qonect_eligibility.py
+new file mode 100644
+index 00000000..098f46f4
+--- /dev/null
++++ b/apiserver/ix/apps/ahio/qonect_eligibility.py
+@@ -0,0 +1,40 @@
++"""Punto único de decisión: ¿este caso puede asignarse automático por Qonect"""
++
++from flask import g
++
++from ix.apps.ahio.provider_type_eligibility import requires_manual_assignment
++from ix.apps.ahio.qonect_sponsor_consistency import validate_qonect_sponsor_consistency
++from ix.apps.ahio.questionnaire_validations import validate_qonect_questionnaire
++from ix.apps.ahio.variables import CHATBOTS, QONECT_ALLOWED_SERVICE_IDS
++from ix.tools.utils.functions import get_sponsor_by_plan_id
++
++
++def is_eligible_for_automatic_qonect(data: dict, case) -> bool:
++    programmed = data.get("programmed")
++    manual_assignation = data.get("trigger")
++    service_id = data.get("service_id")
++
++    if (
++        programmed == 1
++        or manual_assignation
++        or data.get("addReimbursementServiceTicket")
++        or service_id not in QONECT_ALLOWED_SERVICE_IDS
++        or requires_manual_assignment(case.provider_type)
++    ):
++        return False
++
++    sponsor = get_sponsor_by_plan_id(case.assistance_plan_id)
++    if not sponsor or not sponsor.send_to_qonect:
++        return False
++
++    if not validate_qonect_sponsor_consistency(sponsor, data):
++        return False
++
++    if g.current_user.email in CHATBOTS:
++        return True
++
++    return validate_qonect_questionnaire(
++        service_id=service_id,
++        comment=data.get("comment", ""),
++        data=data,
++    )
+-- 
+2.56.0
+

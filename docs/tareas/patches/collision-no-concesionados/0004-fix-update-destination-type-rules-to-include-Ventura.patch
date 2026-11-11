@@ -1,0 +1,111 @@
+From 06ff0190c34d0a982dd27da4a5f818d0cd38a547 Mon Sep 17 00:00:00 2001
+From: Joshua Morin <joshua.morinsalazar@chubb.com>
+Date: Wed, 11 Nov 2026 16:43:46 -0600
+Subject: [PATCH 4/6] fix: update destination type rules to include Ventura as
+ eligible until confirmation from OPS/Redes
+
+---
+ .../ix/apps/ahio/collision_eligibility.py     | 34 ++++++++++++-------
+ .../tests/ahio/test_collision_eligibility.py  | 16 ++++-----
+ 2 files changed, 28 insertions(+), 22 deletions(-)
+
+diff --git a/apiserver/ix/apps/ahio/collision_eligibility.py b/apiserver/ix/apps/ahio/collision_eligibility.py
+index 507dac5a..81a3f1eb 100644
+--- a/apiserver/ix/apps/ahio/collision_eligibility.py
++++ b/apiserver/ix/apps/ahio/collision_eligibility.py
+@@ -24,10 +24,20 @@ def is_vehicle_type_allowed(car_type) -> bool:
+     return _normalize(car_type) in ALLOWED_VEHICLE_TYPES
+ 
+ 
+-BLOCKED_DESTINATION_TYPES = frozenset({"ventura"})
+-
+-# `destination_type` es texto libre (no un catálogo cerrado), así que la
+-# lista negra por sí sola dejaría pasar basura/inyecciones como "elegible"
++# BUG (caso 66648, versión blip, 2026-09-02): esta lista negra excluía
++# "ventura" adelantando ET-01 (la exclusión de Ventura) antes de tiempo.
++# El PRD (§3.1, columna "Notas" de Tipo de Destino) es explícito: "hasta
++# que [OPS/Redes] [confirmen si Ventura NO viaja], éste no se toma como
++# trigger y TODOS los servicios deberán viajar". O sea, ET-01 todavía NO
++# está activa — es una exclusión futura condicionada a una confirmación
++# que aún no llega. Confirmado directo por el usuario (2026-09-02): "de
++# acuerdo al último PRD, todas las reglas viajan". Dejar la lista vacía
++# (no borrar el mecanismo) para que reactivar la exclusión el día que
++# OPS confirme sea un cambio de una línea, no una reintroducción.
++BLOCKED_DESTINATION_TYPES = frozenset()
++
++# `destination_type` es texto libre (no un catálogo cerrado), así que sin
++# ninguna validación cualquier basura/inyección pasaría como "elegible"
+ # (ya vimos payloads de AppScan en pruebas). Esto no es un catálogo de
+ # valores válidos, solo una forma barata de distinguir texto de catálogo
+ # normal de basura evidente, sin reconstruir la lista blanca que el PRD
+@@ -37,15 +47,13 @@ _SUSPICIOUS_DESTINATION_RE = re.compile(r'["\'<>]|://')
+ 
+ 
+ def is_destination_type_allowed(destination_type) -> bool:
+-    """RN-09 (PRD Fase 2 §5.2): por ahora viajan TODOS los tipos de destino.
+-
+-    Reemplaza la lista blanca de Fase 1.5.3 (que solo permitía Agencia,
+-    Taller y Centro de Valuación) — OPS/Redes confirmaron que Corralón,
+-    Tránsito Municipal, Otro y Lugar del Siniestro también viajan. La
+-    única excepción vigente es Ventura, excluida hasta que OPS/Redes
+-    confirmen su tratamiento (ET-01: riesgo de cancelaciones por tiempos
+-    de recepción altos). Fail-closed: vacío, desconocido, o texto que no
+-    luce como catálogo normal (URLs, comillas, muy largo) bloquea.
++    """RN-09 (PRD Fase 2 §5.2): por ahora viajan TODOS los tipos de destino,
++    Ventura incluido — ET-01 (excluir Ventura) es una exclusión futura
++    condicionada a que OPS/Redes confirmen el riesgo de cancelaciones por
++    tiempos de recepción altos; mientras no la confirmen, el PRD dice
++    textualmente que Ventura viaja igual que el resto (ver BLOCKED_DESTINATION_TYPES).
++    Fail-closed: vacío, desconocido, o texto que no luce como catálogo
++    normal (URLs, comillas, muy largo) bloquea.
+     """
+     normalized = _normalize(destination_type)
+     if not normalized or len(normalized) > _MAX_DESTINATION_LENGTH:
+diff --git a/apiserver/ix/tests/ahio/test_collision_eligibility.py b/apiserver/ix/tests/ahio/test_collision_eligibility.py
+index 1f0da905..1daed2d3 100644
+--- a/apiserver/ix/tests/ahio/test_collision_eligibility.py
++++ b/apiserver/ix/tests/ahio/test_collision_eligibility.py
+@@ -71,17 +71,15 @@ class TestDestinationTypeAllowList:
+         "Tránsito Municipal",
+         "Otro",
+         "Lugar del siniestro",
+-    ])
+-    def test_destinos_permitidos(self, destination):
+-        assert is_destination_type_allowed(destination) is True
+-
+-    @pytest.mark.parametrize("destination", [
+         "Ventura",
+         "ventura",
+         "  VENTURA  ",
+     ])
+-    def test_destinos_bloqueados(self, destination):
+-        assert is_destination_type_allowed(destination) is False
++    def test_destinos_permitidos(self, destination):
++        """Ventura viaja también (caso 66648, blip): ET-01 todavía no está
++        activa, el PRD dice que hasta que OPS/Redes confirmen lo contrario
++        todos los destinos viajan, Ventura incluido."""
++        assert is_destination_type_allowed(destination) is True
+ 
+     @pytest.mark.parametrize("destination", [
+         None,
+@@ -149,7 +147,7 @@ class TestCollisionCaseEligibility:
+ 
+     def test_destino_invalido_bloquea_con_motivo(self):
+         elegible, motivo = is_collision_case_eligible(
+-            {"car_type": "Equipo Ligero"}, _case(destination_type="Ventura")
++            {"car_type": "Equipo Ligero"}, _case(destination_type="http://x.com")
+         )
+         assert elegible is False
+         assert "destino" in motivo
+@@ -293,7 +291,7 @@ class TestCasosDePruebaPRD:
+         ("CP-07", "Equipo Ligero", "Centro de Valuación", "Ajustador", True),
+         ("CP-08", "Equipo Ligero", "Corralón de la grúa", "Ajustador", True),
+         ("CP-09", "Equipo Ligero", "Tránsito Municipal", "Ajustador", True),
+-        ("CP-10", "Equipo Ligero", "Ventura", "Ajustador", False),
++        ("CP-10", "Equipo Ligero", "Ventura", "Ajustador", True),
+         ("CP-11", "Equipo Ligero", "Otro", "Ajustador", True),
+         ("CP-12", "Equipo Ligero", "Lugar del siniestro", "Ajustador", True),
+         ("CP-13", "Equipo Ligero", "Taller", "Supervisor", False),
+-- 
+2.56.0
+

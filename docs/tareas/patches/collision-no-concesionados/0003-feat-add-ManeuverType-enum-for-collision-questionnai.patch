@@ -1,0 +1,28 @@
+From 707076fc35c9a4780b1237ebb858f3765dcaa8b5 Mon Sep 17 00:00:00 2001
+From: Joshua Morin <joshua.morinsalazar@chubb.com>
+Date: Wed, 11 Nov 2026 16:43:46 -0600
+Subject: [PATCH 3/6] feat: add ManeuverType enum for collision questionnaire
+ options
+
+---
+ apiserver/ix/enums/maneuver_type.py | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+ create mode 100644 apiserver/ix/enums/maneuver_type.py
+
+diff --git a/apiserver/ix/enums/maneuver_type.py b/apiserver/ix/enums/maneuver_type.py
+new file mode 100644
+index 00000000..0bbb4ead
+--- /dev/null
++++ b/apiserver/ix/enums/maneuver_type.py
+@@ -0,0 +1,8 @@
++from enum import Enum
++
++
++class ManeuverType(str, Enum):
++    """Valores del combo 'Tipo de maniobra' en el cuestionario de colisión."""
++
++    BASIC = "Maniobra básica"
++    SPECIAL = "Maniobra Especial"
+-- 
+2.56.0
+
