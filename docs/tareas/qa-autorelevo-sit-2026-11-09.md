@@ -69,7 +69,7 @@ Servicios dev (`morfeo-dev-321917`): admin+API K2 con fixes → `micrositio-auto
 | # | Tema | Estado |
 |---|---|---|
 | A | Admin no avanza de Autorización a Asignación | Fix en `cc0bd193`; falta probar desplegado |
-| B | "No se pudo determinar la vigencia" con póliza sin inciso | Fix en `cc0bd193`; no probado: Chubb UAT caído y el web no usa `-2` |
+| B | "No se pudo determinar la vigencia" con póliza sin inciso | Fix en `cc0bd193`; prueba e2e corregida; pendiente correrla con Chubb UAT arriba |
 | C | Chubb UAT falla (siniestro 400, token 502) | Externo; reintentar |
 | D | Admin lista folios borrados (`active_record=0`) | Abierto, sin fix |
 | E | Folios cancelados muestran "Continuar" en vez de "Mostrar detalle" | Abierto, sin revisar |
@@ -89,7 +89,7 @@ Servicios dev (`morfeo-dev-321917`): admin+API K2 con fixes → `micrositio-auto
 - Causa: `_fetch_chubb` armaba `NumeroInciso = poliza.split('|')[-1]`; con `BE|43027807` mandaba 43027807 como inciso.
 - Fix: `clave, numero, inciso = self._parse_policy_parts(poliza)` y `NumeroInciso: inciso or ""`.
 - Revisar con Codex: qué acepta `assistancechubb/sales?typeSearch=3` sin inciso (vacío, omitido o "1"); el micrositio manda la póliza sin inciso al crear (`search-event` sí usa `BE|43027807|1`).
-- Automatización: `micrositio-autorelevo-real/autorelevo-e2e/src/qa/vigencia-sin-inciso.spec.ts` (redirige `/k2portal` a `-2` vía `API_FROM/API_TO`; falta `NUM_ASEGURADO`; no se ha corrido; deja un folio en dev si pasa).
+- Automatización: `micrositio-autorelevo-real/autorelevo-e2e/src/qa/vigencia-sin-inciso.spec.ts`, ya corregida. El OTP se lee de `web_service_log` en dev (`sesion.ts`), así que no hace falta apuntar a `-2` para el login. Exige `CONFIRMAR_CREAR_FOLIO_DEV=1`, `POLIZA`, `INCISO`, `NUM_ASEGURADO`, `SINIESTRO` y `BASE_URL`; crea un folio en dev.
 
 ### C. Logs GCP del error de Ale (10 nov 11:11 CST)
 - `micrositio-autorelevo-web`: `POST /k2portal/.../auto-relevo/tickets` → 400.
@@ -109,3 +109,67 @@ Servicios dev (`morfeo-dev-321917`): admin+API K2 con fixes → `micrositio-auto
 - 156 folios abiertos (no Finalizado/Cancelado/No autorizado, `active_record=1`) → `Cancelado` con `datos/qa-autorelevo-sit-2026-11-09/cancelar-folios-abiertos.sql`. Ninguno tenía evento activo en `autorelevo_event`, no se tocaron conteos.
 - Folio 652 (`active_record=0`, "En revisión de documentación") → `Cancelado` a mano.
 - Resultado: 0 folios abiertos en dev. Motivo: folios con errores bloqueaban nuevas solicitudes en pólizas de prueba.
+
+### Continuación Codex — automatización B (10 nov)
+
+- Ramas verificadas: micrositio `CDSEBAU-39-Fix-QA-SIT`; backend `CDSEBAU-57-Fix-QA-SIT-Autorelevo`. El spec de B ya existía sin seguimiento en Git; se completó sin commit.
+- Rastreo: `captura-info.component.ts:onSubmit` construye `prefijo|numero`; `k2-api.service.ts:crearTicket` envía `poliza` y `sinister_chubb_id`; `_get_vigencia` consulta siniestro y después póliza; `_fetch_chubb` usa `_parse_policy_parts` y envía inciso vacío cuando falta. El cambio de `cc0bd193` corrige el payload, pero no confirma el contrato externo de Chubb.
+- Spec: exige datos explícitos, limita destino al backend dev `-2`, calcula `API_FROM` con el origen (sin duplicar `/autorelevo/`), desactiva reintentos, usa un PDF válido y comprueba póliza sin inciso, siniestro, respuesta 2xx, ID de servicio y navegación a `/solicitud/espera` después de subir documentos.
+- Evidencia automática: adjunto `resultado-creacion` con HTTP, ID de servicio y destino. Sin cuerpos completos, tokens ni capturas de datos personales. Los datos de la captura facilitada por el usuario se usan solo en la sesión, no se copian aquí.
+- Verificación: TypeScript pasó; Playwright descubre un caso; corrida sin confirmación se detuvo en `beforeAll`, antes del navegador, como se esperaba. No equivale a una corrida E2E aprobada.
+- Pendiente: ejecutar integración con autorización de creación y disponibilidad de Chubb. Un éxito E2E no prueba necesariamente el fallback por póliza si Chubb ya entrega vigencia por siniestro. Confirmar aparte qué acepta `typeSearch=3` sin inciso.
+
+Comando desde el repositorio del micrositio, con variables de datos definidas en la terminal y creación autorizada:
+
+```bash
+BASE_URL=https://micrositio-autorelevo-web-dot-morfeo-dev-321917.ue.r.appspot.com/ \
+CONFIRMAR_CREAR_FOLIO_DEV=1 \
+npx playwright test -c autorelevo-e2e qa/vigencia-sin-inciso \
+  --project=chromium --workers=1 --reporter=line
+```
+
+Requiere `POLIZA`, `INCISO`, `NUM_ASEGURADO`, `SINIESTRO`. No repetir automáticamente si se creó un folio y falló la carga de documentos; consultar el ID registrado antes de otra ejecución.
+
+Revisión estática adicional (sin fixes ni validación desplegada): A incluye los campos en `related_models.py`; `steps` todavía conserva `redirectUrl` entre emisiones. D: ni `list_tickets` ni `_apply_filters` filtran `ServicioAutoRelevo.active_record`. E: la plantilla solo distingue `Finalizado`; `Cancelado` cae en Continuar. F: `ngOnInit` sale antes de `initForm` cuando falta el ticket. A y D–F siguen pendientes de QA funcional.
+
+### Contactos en login — reporte adicional 10 nov
+
+- Capturas del usuario: `Policy/Detail` muestra teléfono/correo dentro de `responseData.insured`, pero el login responde 422. Las capturas usan números de póliza distintos: al login le falta un dígito respecto de la consulta Bruno. No constituyen todavía una reproducción con la misma entrada.
+- Rastreo local: `login.component.ts` → `auth.service.ts:login` envía el número sin recortarlo → `autorelevo_auth.py:autorelevo_login` normaliza espacios/mayúsculas → `AutorelevoPolicyService.get_policy_detail` consulta `Policy/Detail` con ese mismo número → extrae `responseData.insured.phoneNumber` y `.email`. El 422 se emite cuando ambos están vacíos, antes de generar el contexto OTP.
+- El código local reconoce las claves mostradas en las capturas. Pendiente repetir con exactamente la misma póliza/asegurado/inciso y confirmar el backend efectivo del proxy web; no hay evidencia suficiente para cambiar el mapeo. Una respuesta sin `responseData` útil también puede terminar en el mensaje de contactos ausentes; distinguirla de una póliza válida sin contactos requiere revisar la respuesta real del servicio.
+
+- Confirmación posterior del usuario (captura 10 nov, 12:04): después de corregir el número de póliza, el login avanzó a `/verificacion/canal`, devolvió ambos contactos y mostró SMS/correo. Este caso no reproduce un defecto de extracción de contactos; el fallo anterior correspondía a una entrada distinta. Evidencia visual del usuario, no corrida automatizada. No confirma envío/validación OTP ni creación del folio de B.
+
+### Consulta directa GCP — 10 nov, ~12:08 CST
+
+- Consulta de solo lectura en `morfeo-dev-321917`, logs App Engine desde 16:00 UTC (10:00 CST). POST con rutas `auto-relevo`, `document` o `upload`: último intento de creación a las 17:11:15 UTC (11:11 CST), HTTP 400 en web y `default`, trace `b73677e17d25c45edcf80401883695da`. Los únicos POST posteriores encontrados fueron cierres de folios, HTTP 200.
+- Logs de aplicación 17:11:16–19 UTC confirman `bienafectado` / `Could not find stored procedure`, fallo 502 al obtener token y finalmente «No se pudo determinar» la vigencia. El error ocurre al crear ticket, antes de subir documentos.
+- No se encontraron POST posteriores de creación/carga en esa consulta; esto no prueba recuperación. Codex todavía no reprodujo el flujo mediante E2E. No se guardaron cuerpos ni datos de asegurados.
+
+### Sync del apiserver desplegado y flag de 48 h — 10 nov
+
+- El código de `micrositio-autorelevo-2` (K2 `default`, 10:42 CST) **no era el de la rama local**. Se bajó desde `deployment.files` de `gcloud app versions describe` (GCS `staging.morfeo-dev-321917.appspot.com`, objetos por SHA1): de 2099 archivos, 811 solo diferían por CRLF y 8 tenían contenido distinto; 3 existían solo en GCP.
+- Lo que faltaba en local: validación de 48 h del siniestro (422 `Siniestro reciente`), `FechaReporteSiniestro` en `assistancechubb.py`, `permitir_vigencia_vencida` con siniestro, folio abierto por póliza (409 + `?abierto=1`), `release()` al cancelar/no autorizar y `search-event?solo_venta`. Tests en `apiserver/ix/tests/auto_relevo/`.
+- Rama `CDSEBAU-57-Sync-Autorelevo-GCP` → merge fast-forward a `CDSEBAU-57-Fix-QA-SIT-Autorelevo` (commits `f4038e5e` y `b0e86b89`).
+- Flag: `AUTORELEVO_MIN_HORAS_SINIESTRO` (default 48; dev `0`, test/prod `48`). Con `0` no se consulta Chubb solo para la fecha de reporte.
+- Verificación: `py_compile` OK; tests de `test_tickets_abiertos.py` → 20 pasan, 2 fallan (`test_folio_cancelado_o_no_autorizado_libera_evento` usa `g.s()` y no pide el fixture `app_context` de `ix/tests/conftest.py:308`). Es un hueco del test importado, no del código de producto.
+
+### Nuevas capturas y cambio de destino web — 10 nov
+
+- Logs dev verificados: 12:08 y 12:17 CST, `default` versión `micrositio-autorelevo`, creación HTTP 400 por vigencia, con errores de procedimiento Chubb y obtención de token. A las 13:02–13:03 CST, `default` versión `release-12-nov`, tres creaciones HTTP 400 por «Debe indicar los días de renta». Son errores distintos previos a la carga de archivos.
+- Código local: `validate_and_get_count` permite `dias=None`, pero rechaza días presentes inválidos; `create_ticket` pasa `payload.get("dias_solicitados")`. El micrositio no envía días al crear. No agregar días ficticios como solución.
+- El usuario informa que ya apuntó el web a K2 `-2` para pruebas. El cambio es posterior a los intentos anteriores; falta validar una solicitud nueva contra ese destino. No atribuir los errores de `release-12-nov` al código de `-2`.
+
+### Normalización de la póliza en el micrositio — 10 nov
+
+- El payload de `POST /tickets` llegaba como `"poliza": " Q|250027051"`: el login guardaba en sesión lo tecleado sin limpiar y los cinco puntos que armaban `PREFIJO|NUMERO` partían del valor crudo. `_parse_policy_parts` en K2 recibía prefijo `" Q"` y número `"250027051"`, que no coincide con el `Q2|50027051` de Chubb.
+- Fix en rama `CDSEBAU-39-Fix-QA-SIT`: helper `core/utils/poliza.ts` (`normalizarPoliza` deja solo `[A-Z0-9]` y `polizaK2` arma `PREFIJO|NUMERO`). Se normaliza al iniciar sesión, al restaurar `sessionStorage` y en los cinco usos (`captura-info` ×2, `num-siniestro`, `otp`, `estado-solicitud`).
+- Verificación: `tsc -p autorelevo/tsconfig.app.json --noEmit` y `tsc -p autorelevo-e2e/tsconfig.json --noEmit` sin errores; los seis archivos tocados entran en el programa de compilación.
+- Sigue pendiente: el web de test apunta a un backend de test con el código viejo, así que el 400 de «días de renta» solo desaparece al desplegar `CDSEBAU-57-Fix-QA-SIT-Autorelevo`.
+
+### Columna «Motivo» vacía en el listado del admin — 10 nov
+
+- El listado (`relevo-car/list.component.html:157`) pintaba `BoletaInformativa.motivo_activacion_servicio`, texto que solo escribe el operador al guardar el motivo (`reason-data-form.component.ts:136`). Los folios recién creados salían «No seleccionado» aunque `motivo_servicio_id` sí venía en el payload. En dev: 11 de 12 boletas traen el id; solo la 654 (creada desde el admin) lo tiene `NULL`.
+- Fix (commit `b4c7c81b`): relación `BoletaInformativa.motivo_servicio` (`lazy='joined'`), `MotivoServicio` en `related_models.py` y en `serialize_servicio`, y en el admin un respaldo `motivo_activacion_servicio || MotivoServicio?.nombre`. Se mantiene la prioridad del texto del operador, así que reportes y folios ya procesados no cambian.
+- Verificación: `py_compile`, mapper de SQLAlchemy (`lazy=joined`), `test_tickets_abiertos.py` 20/22 (los 2 fallos previos) y `ng build --configuration development` sin errores.
+- Requiere redesplegar apiserver **y** admin en dev: el nombre del catálogo lo arma el backend.

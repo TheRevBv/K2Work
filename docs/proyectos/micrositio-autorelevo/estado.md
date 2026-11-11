@@ -54,3 +54,9 @@ Según el contexto:
 - 2026-11-03: bundle público de `micrositio-autorelevo-web-dot-morfeo-test` revisado: contiene `-web-dot-morfeo-prod` y `api.avasa.com.mx`, con `<base href="/">`. `joshua.morinsalazar@chubb.com` no tiene `appengine.services.list` en morfeo-test, así que sigue sin verse quién desplegó ni cuándo.
 - 2026-11-03: Cloud Logging de morfeo-test (solo lectura): 3 `CreateVersion` de `micrositio-autorelevo-web` el 2026-10-30 con cuenta personal de Alejandra Almaguer y versión autogenerada; la última, `20261030t085450`, sirve hoy. Sin peticiones a `/api/autorelevo/auth/login` en test en 7 días. Falta confirmar el comando de build con ella.
 - 2026-11-03: ordenadas las carpetas: se trabaja con ramas en `micrositio-autorelevo` (ver skill `k2-autorelevo` y `README.md` de este proyecto).
+
+## 2026-11-10 — Automatización de vigencia sin inciso
+
+- Completado el spec existente `autorelevo-e2e/src/qa/vigencia-sin-inciso.spec.ts`: datos explícitos, destino dev `-2`, confirmación de creación, PDF válido y aserciones de payload/folio/finalización; sin reintentos automáticos.
+- TypeScript y descubrimiento Playwright verificados; control sin autorización probado. Integración real y contrato Chubb sin inciso pendientes; no declarar B resuelto con estos checks.
+- Handoff y matriz: `docs/tareas/qa-autorelevo-sit-2026-11-09.md` y su carpeta `matriz-qa.md`. Revisión estática de A, D–F registrada; no se modificó código de producto ni se desplegó.
