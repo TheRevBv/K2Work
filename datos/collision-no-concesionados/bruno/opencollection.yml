@@ -1,0 +1,41 @@
+opencollection: 1.0.0
+
+info:
+  name: "Colisión No Concesionados - Qonect"
+
+request:
+  auth:
+    type: bearer
+    token: "{{k2_token}}"
+  variables:
+    - name: "baseUrl"
+      value: "http://127.0.0.1:8080"
+    - name: "user"
+      value: "joshua.morinsalazar@chubb.com"
+    - name: "pass"
+      value: "{{process.env.K2_PASS}}"
+    - name: "siniestroAjustador"
+      value: "MA26K002923"
+    - name: "siniestroValuacion"
+      value: "156156163244"
+    - name: "gpsOrigen"
+      value: "19.4846606,-99.1886749"
+    - name: "gpsDestino"
+      value: "19.3948036,-99.0976808"
+
+docs:
+  content: |-
+    Rama `CDSEBAU-6-feat-collision-no-concesionados` (patches 0001-0007). Endpoint real: `POST /api/v2/wa/sinister/create_folio` → `create_assistance_case` → `create_new_assistance_ticket` → `is_eligible_for_automatic_qonect` → `is_collision_case_eligible`.
+
+    Reglas (fail-closed): `car_type` = Equipo Ligero, `destination_type` no vacío ni sospechoso (Ventura SÍ viaja), grúa NO en el sitio (`caneinsite=false`, fijo en flow `collision`), `applicant_type` (viene de Chubb, no del body) = Ajustador, sponsor con `send_to_qonect=1`, estado/municipio permitidos. Con maniobra, `create_assistance_case` pone `trigger=true` → manual (marca `QUITAR EN NUEVOS CAMBIOS DE CONCESIONADO`). Si viaja, Qonect recibe `tipoServicio: 2` (Siniestro).
+
+    **Antes de correr:** cada folio exitoso bloquea su siniestro (`Ya existe un caso para este vehículo`). Los siniestros por defecto vienen de casos de dev (67974 Ajustador, 67954 Centro de Valuación) y ya están usados: cambia `siniestroAjustador` / `siniestroValuacion` por siniestros de Chubb SIT sin caso en K2 con ese tipo de solicitante. Host `local` = apiserver de la rama corriendo en 127.0.0.1:8080 (la rama no está desplegada).
+
+    Verificar cada folio con `datos/collision-no-concesionados/bruno/verificar.sql` (cambiar `@case_id`).
+  type: text/markdown
+bundled: false
+extensions:
+  bruno:
+    ignore:
+      - node_modules
+      - .git

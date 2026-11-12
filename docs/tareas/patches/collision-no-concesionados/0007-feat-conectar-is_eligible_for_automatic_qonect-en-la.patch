@@ -1,0 +1,92 @@
+From 8fbff7048b396dc1925a4e7ebab5d9c95e8a22f0 Mon Sep 17 00:00:00 2001
+From: Joshua Morin <joshua.morinsalazar@chubb.com>
+Date: Wed, 11 Nov 2026 17:20:29 -0600
+Subject: [PATCH] =?UTF-8?q?feat:=20conectar=20is=5Feligible=5Ffor=5Fautoma?=
+ =?UTF-8?q?tic=5Fqonect=20en=20la=20asignaci=C3=B3n=20autom=C3=A1tica=20a?=
+ =?UTF-8?q?=20Qonect?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ apiserver/ix/svc/assistanceticket.py | 40 +++-------------------------
+ 1 file changed, 3 insertions(+), 37 deletions(-)
+
+diff --git a/apiserver/ix/svc/assistanceticket.py b/apiserver/ix/svc/assistanceticket.py
+index 5d96dcdc..d8ab17dc 100644
+--- a/apiserver/ix/svc/assistanceticket.py
++++ b/apiserver/ix/svc/assistanceticket.py
+@@ -8,13 +8,10 @@ from ix.apps.ahio.queries import get_ahio_service_id
+ from ix.apps.ahio.factory import AHIOFactory
+ from ix.apps.ahio.strategies import AhioStrategyCode
+ from ix.apps.ahio.utils import automatic_close_ahio_case_canceled, call_cancel_ahio_service
+-from ix.apps.ahio.questionnaire_validations import validate_qonect_questionnaire
+-from ix.apps.ahio.qonect_sponsor_consistency import validate_qonect_sponsor_consistency
++from ix.apps.ahio.qonect_eligibility import is_eligible_for_automatic_qonect
+ from ix.apps.ahio.variables import (
+-    QONECT_ALLOWED_SERVICE_IDS,
+     is_state_allowed,
+     is_state_district_allowed,
+-    CHATBOTS,
+ )
+ from ix.api.endpoints.typologies_crm import get_typologys
+ from ix import models as m
+@@ -52,7 +49,7 @@ from ix.tools.definitions.user import USER_CSS, USER_SRL_VOICEBOT_NAME, USER_TEL
+ from ix.tools.definitions.global_definitions import (NOT_DEFINED, PLATE, COLOR, LABEL_COLOR_COMMENT, 
+                                                      LABEL_PLATE_COMMENT, SPONSOR_NAME_CHUBB, SMS_SERVICE_NAME, 
+                                                      SMS_TEXT_NEW_CRANE_CASE, SMS_TEXT_NEW_ASSISTANCE_CASE, NICKNAME_TWILIO_LBL)
+-from ix.tools.utils.functions import get_sponsor_name_by_plan_id, get_sponsor_by_plan_id, sinister_sms_text
++from ix.tools.utils.functions import get_sponsor_name_by_plan_id, sinister_sms_text
+ from ix.tools.utils.redis_dispatcher_queue import dispatcher_queue
+ from ix.svc.assignament_dispatchers import REDISTRIBUTION_CATEGORIES, sync_case_redistribution_queue, enqueue_case_for_redistribution
+ from ix.models.assistancecase import AssistanceCase
+@@ -677,37 +674,6 @@ def send_sms_for_new_assistance_case(sponsor_name: str, case_phone: str, country
+         gtools.send_sms(data_first_sms)
+ 
+ 
+-def validate_send_qonect(data, case):
+-    programmed = data.get("programmed")
+-    manual_assignation = data.get("trigger")
+-    service_id = data.get("service_id")
+-
+-    if (
+-        programmed == 1
+-        or manual_assignation
+-        or data.get("addReimbursementServiceTicket")
+-        or service_id not in QONECT_ALLOWED_SERVICE_IDS
+-    ):
+-        return False
+-
+-    sponsor = get_sponsor_by_plan_id(case.assistance_plan_id)
+-    if not sponsor or not sponsor.send_to_qonect:
+-        return False
+-
+-    if not validate_qonect_sponsor_consistency(sponsor, data):
+-        return False
+-
+-    current_user = g.current_user
+-    if current_user.email in CHATBOTS:
+-        return True
+-
+-    return validate_qonect_questionnaire(
+-        service_id=service_id,
+-        comment=data.get("comment", ""),
+-        data=data,
+-    )
+-
+-
+ def _build_geocercas_payload(case, main_ticket, session):
+     """
+     Construye el payload para Geocercas desde el thread principal (objetos ORM ya cargados).
+@@ -1354,7 +1320,7 @@ Saludos"""
+         result_ahio = False
+         if (is_state_allowed(case.state_id) 
+             and is_state_district_allowed(case.state_district_id) 
+-            and validate_send_qonect(data, case)):
++            and is_eligible_for_automatic_qonect(data, case)):
+ 
+             # Pre-construir el payload de Geocercas antes de lanzar el worker.
+             # Si AHIO rechaza o falla, el worker lo usa como fallback en lugar de
+-- 
+2.56.0
+

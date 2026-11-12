@@ -1,0 +1,55 @@
+info:
+  name: "02 Destino Ventura - viaja"
+  type: http
+  seq: 2
+
+http:
+  method: POST
+  url: "{{baseUrl}}/api/v2/wa/sinister/create_folio"
+  headers:
+    - name: "Content-Type"
+      value: "application/json"
+  body:
+    type: json
+    data: |-
+      {
+        "flow_type": "collision",
+        "codigo_siniestro": "{{siniestroAjustador}}",
+        "telefono_contacto_wa": "5512345678",
+        "nombre_contacto": "QA Colision",
+        "ubicacion_gps": "{{gpsOrigen}}",
+        "ubicacion_destino_gps": "{{gpsDestino}}",
+        "transfer_type": "Ciudad",
+        "car_type": "Equipo Ligero",
+        "car_state": "Daño parcial",
+        "car_plate_type": "Nacionales",
+        "car_color": "Negro",
+        "crane_was_requested_by_authority": false,
+        "destination_type": "Ventura",
+        "vehicle_location_type": "Vía pública",
+        "vehicle_has_load": false,
+        "maneuver_required": false,
+        "maneuver_type": null,
+        "tires_rotate": true,
+        "neutral_working": true,
+        "comments": "QA colisión no concesionado"
+      }
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        test("res.getStatus() === 201", () => expect(res.getStatus() === 201).to.be.true);
+
+docs:
+  content: |-
+    Patch 0004: Ventura sigue elegible hasta que OPS/Redes confirmen. Esperado: 201 y envío a Qonect.
+  type: text/markdown
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

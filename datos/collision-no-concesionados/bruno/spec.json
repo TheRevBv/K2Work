@@ -1,0 +1,142 @@
+{
+  "name": "Colisión No Concesionados - Qonect",
+  "host": "local",
+  "env": "k2",
+  "login": true,
+  "user": "joshua.morinsalazar@chubb.com",
+  "variables": {
+    "siniestroAjustador": "MA26K002923",
+    "siniestroValuacion": "156156163244",
+    "gpsOrigen": "19.4846606,-99.1886749",
+    "gpsDestino": "19.3948036,-99.0976808"
+  },
+  "docs": "Rama `CDSEBAU-6-feat-collision-no-concesionados` (patches 0001-0007). Endpoint real: `POST /api/v2/wa/sinister/create_folio` → `create_assistance_case` → `create_new_assistance_ticket` → `is_eligible_for_automatic_qonect` → `is_collision_case_eligible`.\n\nReglas (fail-closed): `car_type` = Equipo Ligero, `destination_type` no vacío ni sospechoso (Ventura SÍ viaja), grúa NO en el sitio (`caneinsite=false`, fijo en flow `collision`), `applicant_type` (viene de Chubb, no del body) = Ajustador, sponsor con `send_to_qonect=1`, estado/municipio permitidos. Con maniobra, `create_assistance_case` pone `trigger=true` → manual (marca `QUITAR EN NUEVOS CAMBIOS DE CONCESIONADO`). Si viaja, Qonect recibe `tipoServicio: 2` (Siniestro).\n\n**Antes de correr:** cada folio exitoso bloquea su siniestro (`Ya existe un caso para este vehículo`). Los siniestros por defecto vienen de casos de dev (67974 Ajustador, 67954 Centro de Valuación) y ya están usados: cambia `siniestroAjustador` / `siniestroValuacion` por siniestros de Chubb SIT sin caso en K2 con ese tipo de solicitante. Host `local` = apiserver de la rama corriendo en 127.0.0.1:8080 (la rama no está desplegada).\n\nVerificar cada folio con `datos/collision-no-concesionados/bruno/verificar.sql` (cambiar `@case_id`).",
+  "defaults": {
+    "method": "POST",
+    "path": "/api/v2/wa/sinister/create_folio",
+    "body": {
+      "flow_type": "collision",
+      "codigo_siniestro": "{{siniestroAjustador}}",
+      "telefono_contacto_wa": "5512345678",
+      "nombre_contacto": "QA Colision",
+      "ubicacion_gps": "{{gpsOrigen}}",
+      "ubicacion_destino_gps": "{{gpsDestino}}",
+      "transfer_type": "Ciudad",
+      "car_type": "Equipo Ligero",
+      "car_state": "Daño parcial",
+      "car_plate_type": "Nacionales",
+      "car_color": "Negro",
+      "crane_was_requested_by_authority": false,
+      "destination_type": "Taller",
+      "vehicle_location_type": "Vía pública",
+      "vehicle_has_load": false,
+      "maneuver_required": false,
+      "maneuver_type": null,
+      "tires_rotate": true,
+      "neutral_working": true,
+      "comments": "QA colisión no concesionado"
+    }
+  },
+  "requests": [
+    {
+      "name": "01 Feliz - viaja a Qonect",
+      "folder": "Elegibles",
+      "tests": ["res.getStatus() === 201"],
+      "docs": "Ajustador + Equipo Ligero + Taller + sin maniobra. Esperado: 201, ticket 391 `trigger` falso, registro en `assistance_case_ahio` con `ahio_service_id` y servicio-propuesto con `tipoServicio: 2`."
+    },
+    {
+      "name": "02 Destino Ventura - viaja",
+      "folder": "Elegibles",
+      "tests": ["res.getStatus() === 201"],
+      "merge": {"destination_type": "Ventura"},
+      "docs": "Patch 0004: Ventura sigue elegible hasta que OPS/Redes confirmen. Esperado: 201 y envío a Qonect."
+    },
+    {
+      "name": "03 Equipo Pesado - manual",
+      "folder": "No elegibles",
+      "tests": ["res.getStatus() === 201"],
+      "merge": {"car_type": "Equipo Pesado"},
+      "docs": "Regla de vehículo (lámina 3). Esperado: 201, sin `assistance_case_ahio`; queda para asignación manual / Geocercas."
+    },
+    {
+      "name": "04 Solicitante Centro de Valuación - manual",
+      "folder": "No elegibles",
+      "tests": ["res.getStatus() === 201"],
+      "merge": {"codigo_siniestro": "{{siniestroValuacion}}"},
+      "docs": "`applicant_type` viene de Chubb. Esperado: 201, sin envío a Qonect (solo Ajustador viaja)."
+    },
+    {
+      "name": "05 Maniobra básica - manual",
+      "folder": "No elegibles",
+      "tests": ["res.getStatus() === 201"],
+      "merge": {"maneuver_required": true, "maneuver_type": "Maniobra básica"},
+      "docs": "Con maniobra `create_assistance_case` fuerza `trigger=true`. Esperado: 201, `case_extra_service` de maniobra y sin envío a Qonect."
+    },
+    {
+      "name": "06 Maniobra especial - manual",
+      "folder": "No elegibles",
+      "tests": ["res.getStatus() === 201"],
+      "merge": {"maneuver_required": true, "maneuver_type": "Maniobra Especial"},
+      "docs": "Doble bloqueo: `trigger` y `_validate_truck_collision` (requiere fotos). Esperado: 201 sin envío a Qonect."
+    },
+    {
+      "name": "07 Destino vacío - manual (fail-closed)",
+      "folder": "No elegibles",
+      "tests": ["res.getStatus() === 201"],
+      "merge": {"destination_type": ""},
+      "docs": "`is_destination_type_allowed` bloquea vacío. Si responde 400, el schema ya rechaza vacío (también válido)."
+    },
+    {
+      "name": "08 Destino sospechoso - manual (fail-closed)",
+      "folder": "No elegibles",
+      "tests": ["res.getStatus() === 201"],
+      "merge": {"destination_type": "<script>alert(1)</script>"},
+      "docs": "Texto con `<>` bloquea el envío automático. Esperado: 201 sin envío a Qonect."
+    },
+    {
+      "name": "09 Concesionada - manual",
+      "folder": "No elegibles",
+      "tests": ["res.getStatus() === 201"],
+      "body": {
+        "flow_type": "concesionada",
+        "codigo_siniestro": "{{siniestroAjustador}}",
+        "telefono_contacto_wa": "5512345678",
+        "nombre_contacto": "QA Colision",
+        "ubicacion_gps": "{{gpsOrigen}}",
+        "ubicacion_destino_gps": "{{gpsDestino}}",
+        "transfer_type": "Ciudad",
+        "car_type": "Equipo Ligero",
+        "car_state": "Daño parcial",
+        "crane_was_requested_by_authority": false,
+        "destination_type": "Taller",
+        "vehicle_has_load": false,
+        "crane_in_site": false,
+        "permisionario": null,
+        "permisionario_name": "Grúas QA",
+        "tires_rotate": true,
+        "neutral_working": true,
+        "comments": "QA colisión concesionada"
+      },
+      "docs": "`provider_type=Concesionado` → `requires_manual_assignment` y `trigger=true`. Esperado: 201 sin envío a Qonect. Usa el mismo siniestro que 01: córrelo con otro siniestro Ajustador libre."
+    },
+    {
+      "name": "10 car_type inválido - 400",
+      "folder": "Validaciones",
+      "tests": ["res.getStatus() === 400"],
+      "merge": {"car_type": "Motocicleta"},
+      "docs": "Schema: solo Equipo Ligero / Equipo Pesado."
+    },
+    {
+      "name": "11 flow_type inválido - 400",
+      "folder": "Validaciones",
+      "tests": ["res.getStatus() === 400"],
+      "merge": {"flow_type": "otro"}
+    },
+    {
+      "name": "12 Duplicado - 400",
+      "folder": "Validaciones",
+      "tests": ["res.getStatus() === 400"],
+      "docs": "Correr después de 01: mismo siniestro y vehículo → `Ya existe un caso para este vehículo`."
+    }
+  ]
+}
