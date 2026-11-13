@@ -48,3 +48,10 @@ Si `origin/dev` avanzó y `git am` choca: `git am --show-current-patch=diff`, re
 ## Pendiente
 - Validar en sandbox Qonect un servicio-propuesto de colisión con `tipoServicio: 2`.
 - Confirmar con OPS/Redes la regla de Ventura (patch 0004).
+
+## 13-nov: caso 67988 no viajó a Qonect (versión blip)
+- El caso sí pasó la elegibilidad (`[AHIO] lanzando worker propose_service`). El worker falló con `Redis 127.0.0.1:6379 connection refused`.
+- Causa: `secrets_loader` no carga ningún secreto porque `GOOGLE_APPLICATION_CREDENTIALS` apunta a `apiserver/ix/keys/morfeo-dev-321917-eb4e5b05c7d9.json`, que no viene en el bundle. Sin secretos, `REDIS_HOST` queda en `None`. Solución: redesplegar sin esa variable.
+- Se quitaron los comentarios narrativos del código y de los tests de no concesionados. `ix/tests/ahio` y `ix/tests/automatic_closing`: 150 passed.
+- Corrección (13-nov): la causa completa era un `.env` incluido en el bundle de blip. `load_secrets` no sobreescribe variables que ya existen, así que `REDIS_HOST` se quedaba local (el log decía `10 cargados, 77 ya existían`). Con el redeploy sin `.env` el log dice `87 cargados, 0 ya existían`.
+- Prueba en blip: caso 67994 (siniestro MA25K004002, bien 1). Llegó a Qonect (`servicio-propuesto` 200). Respuesta: "No existen gruas que cumplan con el tiempo de calidad establecido". 67993 se creó antes del fix y falló por Redis.

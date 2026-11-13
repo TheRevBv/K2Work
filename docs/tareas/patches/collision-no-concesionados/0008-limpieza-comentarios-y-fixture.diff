@@ -1,0 +1,395 @@
+diff --git a/apiserver/ix/apps/ahio/collision_eligibility.py b/apiserver/ix/apps/ahio/collision_eligibility.py
+index fe84c56e..c74cacef 100644
+--- a/apiserver/ix/apps/ahio/collision_eligibility.py
++++ b/apiserver/ix/apps/ahio/collision_eligibility.py
+@@ -1,29 +1,4 @@
+-"""Reglas de elegibilidad Qonect para servicios de Colisión.
+-
+-Origen: PPTX "Cuestionarios Colisión" (láminas 1, 3 y 7) para vehículo y
+-solicitante, y el PRD de Confluence "Digital Dispatch Platform (AHIO) -
+-Fase 2 Colisión No concesionado para envío a Qonect" (actualizado
+-2026-08-27) para destino y grúa en el lugar — ver §5.1 "Triggers
+-confirmados" y RN-06/RN-07/RN-09.
+-
+-Principio fail-closed (PRD §30): un valor vacío, nulo o desconocido
+-bloquea el despacho automático.
+-
+-PENDIENTE DE DEFINICIÓN DE NEGOCIO (matriz QA 2026-09-04, no implementar
+-sin confirmación explícita, mismo criterio que Ventura en
+-BLOCKED_DESTINATION_TYPES):
+-- CP-20 a CP-26: `location_type` / "Ubicación actual-Tipo de localización"
+-  (Crucero, Carretera, Cita/Visita, Oficina, MP/Tránsito, Administrativo)
+-  — el PRD dice conservar todos los triggers existentes del canal
+-  tradicional de K2 hasta que confirmen el cambio.
+-- CP-45: estado del vehículo "Pérdida total evidente" — debe viajar hoy,
+-  sin regla nueva.
+-- CP-46 a CP-50: destino sensible de Ventura en notas, catálogo de
+-  ubicación desactualizado, tipo de unidad en Ajuste Móvil, preguntas
+-  adicionales (4 llantas/neutral/blindado) y sección repetida de tipo de
+-  proveedor — sin regla de negocio definida todavía; ver la matriz QA
+-  para el detalle de cada uno antes de tocar código.
+-"""
++"""Reglas de elegibilidad Qonect para servicios de Colisión (fail-closed)."""
+ 
+ import re
+ 
+@@ -35,41 +10,20 @@ def _normalize(value) -> str:
+ 
+ 
+ def is_vehicle_type_allowed(car_type) -> bool:
+-    """Lámina 3: solo Equipo Ligero puede ir a Qonect automático."""
++    """Solo Equipo Ligero puede ir a Qonect automático."""
+     return _normalize(car_type) in ALLOWED_VEHICLE_TYPES
+ 
+ 
+-# BUG (caso 66648, versión blip, 2026-09-02): esta lista negra excluía
+-# "ventura" adelantando ET-01 (la exclusión de Ventura) antes de tiempo.
+-# El PRD (§3.1, columna "Notas" de Tipo de Destino) es explícito: "hasta
+-# que [OPS/Redes] [confirmen si Ventura NO viaja], éste no se toma como
+-# trigger y TODOS los servicios deberán viajar". O sea, ET-01 todavía NO
+-# está activa — es una exclusión futura condicionada a una confirmación
+-# que aún no llega. Confirmado directo por el usuario (2026-09-02): "de
+-# acuerdo al último PRD, todas las reglas viajan". Dejar la lista vacía
+-# (no borrar el mecanismo) para que reactivar la exclusión el día que
+-# OPS confirme sea un cambio de una línea, no una reintroducción.
++# Vacía hasta que OPS confirme excluir Ventura (ET-01).
+ BLOCKED_DESTINATION_TYPES = frozenset()
+ 
+-# `destination_type` es texto libre (no un catálogo cerrado), así que sin
+-# ninguna validación cualquier basura/inyección pasaría como "elegible"
+-# (ya vimos payloads de AppScan en pruebas). Esto no es un catálogo de
+-# valores válidos, solo una forma barata de distinguir texto de catálogo
+-# normal de basura evidente, sin reconstruir la lista blanca que el PRD
+-# pidió eliminar.
++# destination_type es texto libre: se rechaza texto que no luce como catálogo.
+ _MAX_DESTINATION_LENGTH = 60
+ _SUSPICIOUS_DESTINATION_RE = re.compile(r'["\'<>]|://')
+ 
+ 
+ def is_destination_type_allowed(destination_type) -> bool:
+-    """RN-09 (PRD Fase 2 §5.2): por ahora viajan TODOS los tipos de destino,
+-    Ventura incluido — ET-01 (excluir Ventura) es una exclusión futura
+-    condicionada a que OPS/Redes confirmen el riesgo de cancelaciones por
+-    tiempos de recepción altos; mientras no la confirmen, el PRD dice
+-    textualmente que Ventura viaja igual que el resto (ver BLOCKED_DESTINATION_TYPES).
+-    Fail-closed: vacío, desconocido, o texto que no luce como catálogo
+-    normal (URLs, comillas, muy largo) bloquea.
+-    """
++    """Viajan todos los tipos de destino; vacío o texto sospechoso bloquea."""
+     normalized = _normalize(destination_type)
+     if not normalized or len(normalized) > _MAX_DESTINATION_LENGTH:
+         return False
+@@ -82,33 +36,17 @@ ALLOWED_APPLICANT_TYPES = frozenset({"ajustador"})
+ 
+ 
+ def is_applicant_type_allowed(applicant_type) -> bool:
+-    """Lámina 1: solo Ajustador puede ir a Qonect automático.
+-
+-    No confundir con APPRAISER ('Valuador') de
+-    ix/tools/definitions/catalog_equivalence.py, que se usa para otra
+-    excepción (geocercas/Morfeo) y no debe unificarse con ésta.
+-    """
++    """Solo Ajustador puede ir a Qonect automático."""
+     return _normalize(applicant_type) in ALLOWED_APPLICANT_TYPES
+ 
+ 
+ def is_crane_absent(case) -> bool:
+-    """RN-07 (PRD Fase 2 §5.1): solo viaja si la grúa NO está ya en el lugar.
+-
+-    `AssistanceCase.caneinsite` (sic, columna real en BD) es Boolean con
+-    default=True. Por eso el fail-closed aquí es "cualquier cosa que no
+-    sea explícitamente False bloquea" — un caso sin este dato capturado
+-    hereda el default True y bloquea, en vez de asumir que la grúa no
+-    está.
+-    """
++    """Solo viaja si la grúa no está en el lugar; caneinsite tiene default True."""
+     return getattr(case, "caneinsite", True) is False
+ 
+ 
+ def is_collision_case_eligible(data: dict, case) -> tuple:
+-    """Evalúa las reglas de elegibilidad de colisión.
+-
+-    Devuelve (elegible, motivo). El motivo es para trazabilidad: dice qué
+-    regla bloqueó el despacho automático.
+-    """
++    """Devuelve (elegible, motivo)."""
+     car_type = (data or {}).get("car_type")
+     if not is_vehicle_type_allowed(car_type):
+         return False, "tipo de vehículo no permitido para asignación automática"
+diff --git a/apiserver/ix/apps/ahio/provider_type_eligibility.py b/apiserver/ix/apps/ahio/provider_type_eligibility.py
+index 33c52dee..8df8d713 100644
+--- a/apiserver/ix/apps/ahio/provider_type_eligibility.py
++++ b/apiserver/ix/apps/ahio/provider_type_eligibility.py
+@@ -1,14 +1,10 @@
+ """Regla de negocio: qué tipos de proveedor pueden asignarse automáticamente."""
+ 
+-# Tipos de proveedor que siempre requieren asignación manual em colision, sin importar el
+-# canal que haya creado el caso. Solo "No concesionado" puede ir automático.
+ MANUAL_ONLY_PROVIDER_TYPES = {"concesionado", "ventura"}
+ 
+ 
+ def requires_manual_assignment(provider_type: str) -> bool:
+     normalized = (provider_type or "").strip().lower()
+-    # Fail-closed (PRD §30): sin clasificación de proveedor no se puede
+-    # decidir que es automático.
+     if not normalized:
+         return True
+     return normalized in MANUAL_ONLY_PROVIDER_TYPES
+diff --git a/apiserver/ix/apps/ahio/qonect_eligibility.py b/apiserver/ix/apps/ahio/qonect_eligibility.py
+index 991ed865..7ca42123 100644
+--- a/apiserver/ix/apps/ahio/qonect_eligibility.py
++++ b/apiserver/ix/apps/ahio/qonect_eligibility.py
+@@ -1,4 +1,4 @@
+-"""Punto único de decisión: ¿este caso puede asignarse automático por Qonect"""
++"""Decide si un caso puede asignarse automático por Qonect."""
+ 
+ from flask import g
+ 
+@@ -31,16 +31,12 @@ def is_eligible_for_automatic_qonect(data: dict, case) -> bool:
+     if not validate_qonect_sponsor_consistency(sponsor, data):
+         return False
+ 
+-    # Las reglas de colisión aplican a todos los orígenes, incluidos los
+-    # chatbots: el atajo de abajo no debe saltárselas.
+     if service_id == SERVICE_TRUCK_COLLISION:
+         eligible, _reason = is_collision_case_eligible(data, case)
+         if not eligible:
+             return False
+ 
+-    # El atajo de chatbots se acota por servicio: en colisión hay que seguir
+-    # hasta el cuestionario, porque ahí vive la validación de maniobra
+-    # especial. Los demás servicios conservan el comportamiento previo.
++    # En colisión los chatbots también pasan por el cuestionario (maniobra especial).
+     if g.current_user.email in CHATBOTS and service_id != SERVICE_TRUCK_COLLISION:
+         return True
+ 
+diff --git a/apiserver/ix/apps/ahio/questionnaire_validations.py b/apiserver/ix/apps/ahio/questionnaire_validations.py
+index 96329069..d1b15c76 100644
+--- a/apiserver/ix/apps/ahio/questionnaire_validations.py
++++ b/apiserver/ix/apps/ahio/questionnaire_validations.py
+@@ -29,12 +29,6 @@ JUMPSTART_SUFFICIENT_RE = (
+ 
+ VEHICLE_FRONT_FACING_RE = r"(?:\d+\.\s*)?¿El frente del vehículo esta hacia alguna\?\s*(.+?)(?:\n|$)"
+ 
+-# El label del dropdown Angular (pregunta7siniestro) es "Pared/obstrucción",
+-# pero los datos reales (casos 66691 y 66726, confirmados en DB 2026-09-07)
+-# guardan el cuestionario con la respuesta como "Pared" a secas — el flujo de
+-# "Boleta creada por operador" no manda el label completo. Se compara con
+-# startswith("pared") tras normalizar para cubrir ambas variantes sin
+-# depender de cuál llegue.
+ 
+ VEHICLE_LOCATION_RE = r"(?:\d+\.\s*)?¿Dónde se encuentra el vehículo\?\s*(.+?)(?:\n|$)"
+ VEHICLE_CARGO_RE = r"(?:\d+\.\s*)?¿Tiene algún tipo de carga\?\s*(Si|No|Sí)"
+@@ -50,15 +44,7 @@ def _normalize_no_accents(value: str) -> str:
+     return normalized.encode("ascii", "ignore").decode("ascii").strip().lower()
+ 
+ 
+-# Texto real de la opción en el formulario Angular (pregunta5siniestro):
+-# "Estacionamiento – Nivel" (en-dash, con espacios) — no "Estacionamiento/Nivel"
+-# ni "Estacionamiento" a secas. "Barranco" y "Túnel" también son opciones
+-# reales de este campo pero QA no las marcó como bloqueantes: se dejan
+-# fuera del set (fail-open) hasta tener evidencia o definición de negocio.
+-# Nota (discrepancia detectada vs. plan): el literal "estacionamiento – nivel"
+-# no matcheaba tras _normalize_no_accents porque el en-dash se elimina por
+-# completo al codificar a ascii (no es un acento NFD) — se normaliza el
+-# valor real aquí mismo para que la comparación sea consistente.
++# Barranco y Túnel no bloquean hasta que negocio lo defina.
+ BLOCKED_VEHICLE_LOCATIONS = {_normalize_no_accents("Estacionamiento – Nivel")}
+ 
+ 
+@@ -129,8 +115,7 @@ def _has_special_maneuver(case_id) -> bool:
+ 
+ 
+ def _validate_vehicle_front_facing(comment: str) -> bool:
+-    """RN colisión (QA CP-32/CP-33): "Pared" (o "Pared/obstrucción") bloquea,
+-    cualquier otra respuesta (incluida ausencia de la pregunta) no bloquea."""
++    """Pared u obstrucción bloquea; sin respuesta no bloquea."""
+     facing = _match_group(VEHICLE_FRONT_FACING_RE, comment)
+     if facing is None:
+         return True
+@@ -138,7 +123,7 @@ def _validate_vehicle_front_facing(comment: str) -> bool:
+ 
+ 
+ def _validate_vehicle_location(comment: str) -> bool:
+-    """RN colisión (QA CP-34 a CP-37): "Estacionamiento – Nivel" bloquea."""
++    """Estacionamiento – Nivel bloquea."""
+     location = _match_group(VEHICLE_LOCATION_RE, comment)
+     if location is None:
+         return True
+@@ -146,7 +131,7 @@ def _validate_vehicle_location(comment: str) -> bool:
+ 
+ 
+ def _validate_vehicle_cargo(comment: str) -> bool:
+-    """RN colisión (QA CP-38/CP-39): transportar carga bloquea."""
++    """Transportar carga bloquea."""
+     cargo = _match_group(VEHICLE_CARGO_RE, comment)
+     if cargo is None:
+         return True
+@@ -154,11 +139,7 @@ def _validate_vehicle_cargo(comment: str) -> bool:
+ 
+ 
+ def _validate_truck_collision(comment: str, data: dict) -> bool:
+-    # El tipo de vehículo se valida con la lista blanca de
+-    # apps/ahio/collision_eligibility.py. Aquí queda la maniobra (requiere
+-    # fotos que Qonect aún no soporta) y las respuestas del cuestionario
+-    # de colisión que sí bloquean (QA CP-32 a CP-39): frente hacia pared,
+-    # vehículo en estacionamiento/nivel, o con carga.
++    # El tipo de vehículo se valida en collision_eligibility.py.
+     if _has_special_maneuver(data.get("case_id")):
+         return False
+     if not _validate_vehicle_front_facing(comment):
+diff --git a/apiserver/ix/apps/automatic_closing/strategies/AutomaticClosingProcess.py b/apiserver/ix/apps/automatic_closing/strategies/AutomaticClosingProcess.py
+index 73dc7e88..cbed85b1 100644
+--- a/apiserver/ix/apps/automatic_closing/strategies/AutomaticClosingProcess.py
++++ b/apiserver/ix/apps/automatic_closing/strategies/AutomaticClosingProcess.py
+@@ -138,9 +138,6 @@ class AutomaticClosingProcess:
+         assistance_case_ahio = ahio_service.get_instance()
+         if assistance_case_ahio and (self.data.from_ahio_automatic_closing or self.data.from_case_canceled):
+             return True
+-        # Colisión (391) entró al whitelist de Qonect después de que se
+-        # escribió este gate; sin ella, el cierre manual desde el admin
+-        # bloquea los casos de colisión.
+         return self.ticket.service_id in (CRANE_SERVICE_ID, SERVICE_TRUCK_COLLISION)
+     
+     def validate_status(self):
+diff --git a/apiserver/ix/tests/ahio/test_collision_eligibility.py b/apiserver/ix/tests/ahio/test_collision_eligibility.py
+index cd8f90a3..43ccaba6 100644
+--- a/apiserver/ix/tests/ahio/test_collision_eligibility.py
++++ b/apiserver/ix/tests/ahio/test_collision_eligibility.py
+@@ -180,9 +180,7 @@ class TestCollisionCaseEligibility:
+ 
+ 
+ class TestChatbotsNoOmitenReglasDeColision:
+-    # `g` es un LocalProxy de werkzeug: hay que sustituirlo con un objeto
+-    # explícito, porque el patch por defecto lo inspecciona y truena fuera
+-    # del contexto de aplicación de Flask.
++    # g se sustituye con un objeto explícito: patch lo inspecciona fuera del contexto Flask.
+ 
+     def test_chatbot_con_vehiculo_invalido_no_es_elegible(self):
+         from ix.apps.ahio import qonect_eligibility
+@@ -233,7 +231,7 @@ class TestChatbotsNoOmitenReglasDeColision:
+             assert fake_q.called, "el cuestionario debe evaluarse aunque sea un chatbot"
+ 
+     def test_chatbot_en_servicio_no_colision_conserva_el_atajo(self):
+-        """Regresión: fuera de colisión el atajo sigue igual que antes."""
++        """Fuera de colisión el atajo de chatbots no cambia."""
+         from ix.apps.ahio import qonect_eligibility
+         from ix.apps.ahio.variables import SERVICE_CRANE
+ 
+@@ -331,10 +329,7 @@ class TestPensionNoBloquea:
+ 
+ 
+ class TestReglasPendientesDeDefinicionNoBloquean:
+-    """QA CP-20 a CP-26, CP-45 a CP-50: sin definición final de negocio.
+-    Estos tests fijan que hoy NO bloquean — si alguien agrega una regla de
+-    location_type o de estado del vehículo sin confirmación de negocio,
+-    estos tests avisan del cambio de comportamiento."""
++    """Reglas sin definición de negocio: hoy no deben bloquear."""
+ 
+     @pytest.mark.parametrize("location_type", [
+         "Crucero", "Carretera", "Cita/Visita", "Oficina",
+diff --git a/apiserver/ix/tests/ahio/test_questionnaire_validations.py b/apiserver/ix/tests/ahio/test_questionnaire_validations.py
+index c1b943df..f5164298 100644
+--- a/apiserver/ix/tests/ahio/test_questionnaire_validations.py
++++ b/apiserver/ix/tests/ahio/test_questionnaire_validations.py
+@@ -78,11 +78,11 @@ class TestQuestionnaireValidations:
+         "comment, expected",
+         [
+             ("3. ¿El frente del vehículo esta hacia alguna? Área abierta", True),
+-            ("3. ¿El frente del vehículo esta hacia alguna? Pared", False),  # caso real 66691/66726
++            ("3. ¿El frente del vehículo esta hacia alguna? Pared", False),
+             ("3. ¿El frente del vehículo esta hacia alguna? pared", False),
+             ("3. ¿El frente del vehículo esta hacia alguna? Pared/obstrucción", False),  # label del dropdown
+             ("3. ¿El frente del vehículo esta hacia alguna? pared/obstrucción", False),
+-            ("", True),  # pregunta ausente: no bloquea (ver Task 1 del plan, principio fail-open aquí)
++            ("", True),
+         ],
+     )
+     def test_collision_frente_del_vehiculo(self, comment, expected):
+@@ -95,8 +95,8 @@ class TestQuestionnaireValidations:
+             ("2. ¿Dónde se encuentra el vehículo? Vía Pública", True),
+             ("2. ¿Dónde se encuentra el vehículo? Carretera", True),
+             ("2. ¿Dónde se encuentra el vehículo? Domicilio", True),
+-            ("2. ¿Dónde se encuentra el vehículo? Barranco", True),  # opción real, no probada por QA — fail-open
+-            ("2. ¿Dónde se encuentra el vehículo? Túnel", True),  # opción real, no probada por QA — fail-open
++            ("2. ¿Dónde se encuentra el vehículo? Barranco", True),
++            ("2. ¿Dónde se encuentra el vehículo? Túnel", True),
+             ("2. ¿Dónde se encuentra el vehículo? Estacionamiento – Nivel", False),
+             ("", True),
+         ],
+@@ -133,7 +133,7 @@ class TestQuestionnaireValidations:
+         assert validate_qonect_questionnaire(SERVICE_TRUCK_COLLISION, comment, {"case_id": None}) is True
+ 
+     def test_collision_cuestionario_pared_bloquea_end_to_end(self):
+-        """QA CP-33 (folio 66691): pared/obstrucción debe bloquear incluso con el resto de triggers en orden."""
++        """Pared/obstrucción bloquea incluso con el resto de triggers en orden."""
+         from ix.apps.ahio.questionnaire_validations import validate_qonect_questionnaire
+         from ix.apps.ahio.variables import SERVICE_TRUCK_COLLISION
+         comment = (
+diff --git a/apiserver/ix/tests/automatic_closing/test_validate_service_id.py b/apiserver/ix/tests/automatic_closing/test_validate_service_id.py
+index 308b8a12..767d9ac1 100644
+--- a/apiserver/ix/tests/automatic_closing/test_validate_service_id.py
++++ b/apiserver/ix/tests/automatic_closing/test_validate_service_id.py
+@@ -19,8 +19,8 @@ def _process(service_id):
+ class TestValidateServiceId:
+ 
+     @pytest.mark.parametrize("service_id, expected", [
+-        (332, True),   # grúa tradicional: comportamiento previo, sin cambios
+-        (391, True),   # colisión: lo que arregla este cambio
++        (332, True),
++        (391, True),
+         (333, False),  # cambio de llanta: sigue bloqueado
+     ])
+     def test_servicios_permitidos_para_cierre_automatico(self, service_id, expected):
+diff --git a/apiserver/ix/tests/fixtures/catalog_equivalence.py b/apiserver/ix/tests/fixtures/catalog_equivalence.py
+index 2531dd9d..1dbb415f 100644
+--- a/apiserver/ix/tests/fixtures/catalog_equivalence.py
++++ b/apiserver/ix/tests/fixtures/catalog_equivalence.py
+@@ -20,12 +20,12 @@ def catalog_equivalence():
+ @pytest.fixture
+ def catalog_equivalence_allowed_states(catalog_equivalence):
+     catalog_equivalence.value_ = "allowed_states_ahio"
+-    catalog_equivalence.equivalence_ = "142,145,150,151,158,164,156"
++    catalog_equivalence.description = "142,145,150,151,158,164,156"
+     return catalog_equivalence
+ 
+ 
+ @pytest.fixture
+ def catalog_equivalence_allowed_district(catalog_equivalence):
+     catalog_equivalence.value_ = "allowed_district_ahio"
+-    catalog_equivalence.equivalence_ = "1371,1366,2069,2054,1961,1999,2024,2052,1924,1921,1862,1558,1563,1564,3109,3101,3106,3339,3310,3304,2366,2710,2686"
++    catalog_equivalence.description = "1371,1366,2069,2054,1961,1999,2024,2052,1924,1921,1862,1558,1563,1564,3109,3101,3106,3339,3310,3304,2366,2710,2686"
+     return catalog_equivalence
+diff --git a/apiserver/ix/tools/definitions/catalog_equivalence.py b/apiserver/ix/tools/definitions/catalog_equivalence.py
+index 4f733aa9..a8f70daf 100644
+--- a/apiserver/ix/tools/definitions/catalog_equivalence.py
++++ b/apiserver/ix/tools/definitions/catalog_equivalence.py
+@@ -11,12 +11,7 @@ CHUBB_DESTINATION_PLACE_TYPE_ROOT = "catalog_destination_chubb_sinister"
+ # Hijo "NO ENCONTRADO" bajo esa raíz (y bajo sí mismo, para la subtipología).
+ CHUBB_PLACE_TYPE_NOT_FOUND = "0"
+ 
+-# Tipos de lugar bajo esa raíz cuyo catálogo de destinos NO depende de
+-# estado/municipio (por eso get_location_chubb los busca con
+-# equivalence_=0, equivalence2_=0 en vez de por código de estado/municipio):
+-# "0" NO ENCONTRADO y "7" Lugar del Siniestro. Verificado en BD dev
+-# (catalog_equivalence.from_ = 16600): "7" NO es un sentinel de vacío, es
+-# un tipo de destino real y frecuente (98 casos históricos de colisión).
++# Tipos de lugar cuyos destinos no dependen de estado/municipio: NO ENCONTRADO y Lugar del Siniestro.
+ CHUBB_PLACE_TYPES_WITHOUT_STATE_DISTRICT = frozenset({"0", "7"})
+ 
+ LIMIT_FEE_CONCESIONED = "limit_fee_for_concesioned"
+diff --git a/apiserver/ix/whatsApp/services/collision.py b/apiserver/ix/whatsApp/services/collision.py
+index 90981b92..39aeac89 100644
+--- a/apiserver/ix/whatsApp/services/collision.py
++++ b/apiserver/ix/whatsApp/services/collision.py
+@@ -409,9 +409,7 @@ def create_assistance_case(data) -> models.AssistanceCase:
+     create_assistance_case_data["attachment_ids"] = []
+     create_assistance_case_data["sinister_vehicle_id"] = vehicle.id
+     
+-    ## HARCODED MIENTRAS SE DEFINE el destino real.
+-    ## Se resuelve por llave de negocio y no por PK: los ids de
+-    ## catalog_equivalence no son los mismos entre dev y prod.
++    # Por llave de negocio: los ids de catalog_equivalence difieren entre dev y prod.
+     CE = models.CatalogEquivalence
+ 
+     chubb_places_root = g.s().query(CE).filter(
