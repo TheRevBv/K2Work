@@ -1,0 +1,71 @@
+diff --git a/apiserver/ix/apps/ahio/questionnaire_validations.py b/apiserver/ix/apps/ahio/questionnaire_validations.py
+index d1b15c76..7aa27bc7 100644
+--- a/apiserver/ix/apps/ahio/questionnaire_validations.py
++++ b/apiserver/ix/apps/ahio/questionnaire_validations.py
+@@ -27,11 +27,11 @@ JUMPSTART_SUFFICIENT_RE = (
+     r"para que arranque su vehículo\?\s*(Si|No)"
+ )
+ 
+-VEHICLE_FRONT_FACING_RE = r"(?:\d+\.\s*)?¿El frente del vehículo esta hacia alguna\?\s*(.+?)(?:\n|$)"
++VEHICLE_FRONT_FACING_RE = r"(?:\d+\.\s*)?¿El frente del vehículo esta hacia alguna\?:?[ \t]*([^\n]*)"
+ 
+ 
+-VEHICLE_LOCATION_RE = r"(?:\d+\.\s*)?¿Dónde se encuentra el vehículo\?\s*(.+?)(?:\n|$)"
+-VEHICLE_CARGO_RE = r"(?:\d+\.\s*)?¿Tiene algún tipo de carga\?\s*(Si|No|Sí)"
++VEHICLE_LOCATION_RE = r"(?:\d+\.\s*)?¿Dónde se encuentra el vehículo\?:?[ \t]*([^\n]*)"
++VEHICLE_CARGO_RE = r"(?:\d+\.\s*)?¿Tiene algún tipo de carga\?:?[ \t]*(Si|No|Sí)"
+ 
+ 
+ def _match_group(pattern: str, comment: str, flags=re.IGNORECASE | re.DOTALL):
+diff --git a/apiserver/ix/tests/ahio/test_questionnaire_validations.py b/apiserver/ix/tests/ahio/test_questionnaire_validations.py
+index f5164298..558ca5e5 100644
+--- a/apiserver/ix/tests/ahio/test_questionnaire_validations.py
++++ b/apiserver/ix/tests/ahio/test_questionnaire_validations.py
+@@ -80,8 +80,10 @@ class TestQuestionnaireValidations:
+             ("3. ¿El frente del vehículo esta hacia alguna? Área abierta", True),
+             ("3. ¿El frente del vehículo esta hacia alguna? Pared", False),
+             ("3. ¿El frente del vehículo esta hacia alguna? pared", False),
+-            ("3. ¿El frente del vehículo esta hacia alguna? Pared/obstrucción", False),  # label del dropdown
++            ("3. ¿El frente del vehículo esta hacia alguna? Pared/obstrucción", False),
+             ("3. ¿El frente del vehículo esta hacia alguna? pared/obstrucción", False),
++            ("3. ¿El frente del vehículo esta hacia alguna?: Pared", False),
++            ("3. ¿El frente del vehículo esta hacia alguna? \n4. Pared", True),
+             ("", True),
+         ],
+     )
+@@ -98,6 +100,8 @@ class TestQuestionnaireValidations:
+             ("2. ¿Dónde se encuentra el vehículo? Barranco", True),
+             ("2. ¿Dónde se encuentra el vehículo? Túnel", True),
+             ("2. ¿Dónde se encuentra el vehículo? Estacionamiento – Nivel", False),
++            ("2. ¿Dónde se encuentra el vehículo?: Estacionamiento – Nivel", False),
++            ("2. ¿Dónde se encuentra el vehículo?: Vía pública", True),
+             ("", True),
+         ],
+     )
+@@ -111,6 +115,8 @@ class TestQuestionnaireValidations:
+             ("4. ¿Tiene algún tipo de carga? No", True),
+             ("4. ¿Tiene algún tipo de carga? Si", False),
+             ("4. ¿Tiene algún tipo de carga? Sí", False),
++            ("2. ¿Tiene algún tipo de carga?: Sí", False),
++            ("2. ¿Tiene algún tipo de carga?: No", True),
+             ("", True),
+         ],
+     )
+@@ -132,6 +138,17 @@ class TestQuestionnaireValidations:
+         )
+         assert validate_qonect_questionnaire(SERVICE_TRUCK_COLLISION, comment, {"case_id": None}) is True
+ 
++    def test_collision_cuestionario_whatsapp_con_carga_bloquea(self):
++        from ix.apps.ahio.questionnaire_validations import validate_qonect_questionnaire
++        from ix.apps.ahio.variables import SERVICE_TRUCK_COLLISION
++        comment = (
++            "1. ¿La grúa fue solicitada por la autoridad ?: No"
++            "\n2. ¿Tiene algún tipo de carga?: Sí"
++            "\n3. ¿Dónde se encuentra el vehículo?: Vía pública"
++            "\n4. ¿Giran las llantas?: Sí"
++        )
++        assert validate_qonect_questionnaire(SERVICE_TRUCK_COLLISION, comment, {"case_id": None}) is False
++
+     def test_collision_cuestionario_pared_bloquea_end_to_end(self):
+         """Pared/obstrucción bloquea incluso con el resto de triggers en orden."""
+         from ix.apps.ahio.questionnaire_validations import validate_qonect_questionnaire
