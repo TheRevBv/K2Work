@@ -1,0 +1,150 @@
+diff --git a/autorelevo/src/app/core/guards/auth.guard.ts b/autorelevo/src/app/core/guards/auth.guard.ts
+index 3c7c2e1..4343550 100644
+--- a/autorelevo/src/app/core/guards/auth.guard.ts
++++ b/autorelevo/src/app/core/guards/auth.guard.ts
+@@ -1,12 +1,14 @@
+ import { inject } from '@angular/core';
+ import { CanActivateFn, Router } from '@angular/router';
+ import { AuthService } from '../services/auth.service';
++import { SolicitudService } from '../services/solicitud.service';
+ 
+-export const authGuard: CanActivateFn = () => {
++export const authGuard: CanActivateFn = (_route, state) => {
+   const auth = inject(AuthService);
+   const router = inject(Router);
+ 
+   if (auth.isAuthenticated()) return true;
+ 
++  if (state.url.startsWith('/estado')) inject(SolicitudService).marcarConsulta(true);
+   return router.createUrlTree(['/auth/login']);
+ };
+diff --git a/autorelevo/src/app/core/services/solicitud.service.ts b/autorelevo/src/app/core/services/solicitud.service.ts
+index 082cf60..e46421d 100644
+--- a/autorelevo/src/app/core/services/solicitud.service.ts
++++ b/autorelevo/src/app/core/services/solicitud.service.ts
+@@ -32,6 +32,8 @@ const INITIAL: SolicitudState = {
+ };
+ 
+ const STORAGE_KEY = 'ar_solicitud_state';
++/** Fuera del estado: el reset por cambio de póliza al iniciar sesión lo borraría. */
++const CONSULTA_KEY = 'ar_modo_consulta';
+ 
+ function leerEstadoGuardado(): SolicitudState {
+   try {
+@@ -109,6 +111,18 @@ export class SolicitudService {
+     );
+   }
+ 
++  /** El usuario entró por "Consultar estatus": tras el OTP se busca su folio, no se crea uno. */
++  marcarConsulta(activo: boolean): void {
++    try {
++      if (activo) sessionStorage.setItem(CONSULTA_KEY, '1');
++      else sessionStorage.removeItem(CONSULTA_KEY);
++    } catch { /* ignore */ }
++  }
++
++  enConsulta(): boolean {
++    try { return sessionStorage.getItem(CONSULTA_KEY) === '1'; } catch { return false; }
++  }
++
+   reset(): void {
+     this._state.update((s) => ({ ...INITIAL, poliza: s.poliza }));
+   }
+diff --git a/autorelevo/src/app/features/auth/bienvenida/bienvenida.component.ts b/autorelevo/src/app/features/auth/bienvenida/bienvenida.component.ts
+index 00ef87f..7de0782 100644
+--- a/autorelevo/src/app/features/auth/bienvenida/bienvenida.component.ts
++++ b/autorelevo/src/app/features/auth/bienvenida/bienvenida.component.ts
+@@ -1,5 +1,6 @@
+-import { Component } from '@angular/core';
+-import { RouterLink } from '@angular/router';
++import { Component, inject } from '@angular/core';
++import { Router, RouterLink } from '@angular/router';
++import { SolicitudService } from '../../../core/services/solicitud.service';
+ import { CbButtonDirective } from '@chubb/ui-components/cb-button';
+ 
+ @Component({
+@@ -44,7 +45,7 @@ import { CbButtonDirective } from '@chubb/ui-components/cb-button';
+             ¿Deseas iniciar una nueva solicitud o consultar el estatus de tu folio?
+           </p>
+ 
+-          <button type="button" cbButton [variant]="'primary'" [routerLink]="['/auth/login']" class="bvc-btn">
++          <button type="button" cbButton [variant]="'primary'" (click)="iniciarSolicitud()" class="bvc-btn">
+             Iniciar solicitud
+           </button>
+           <button type="button" cbButton [variant]="'secondary'" [routerLink]="['/estado']" class="bvc-btn">
+@@ -198,4 +199,12 @@ import { CbButtonDirective } from '@chubb/ui-components/cb-button';
+     }
+   `],
+ })
+-export class BienvenidaComponent {}
++export class BienvenidaComponent {
++  private router       = inject(Router);
++  private solicitudSvc = inject(SolicitudService);
++
++  protected iniciarSolicitud(): void {
++    this.solicitudSvc.marcarConsulta(false);
++    this.router.navigate(['/auth/login']);
++  }
++}
+diff --git a/autorelevo/src/app/features/auth/otp/otp.component.ts b/autorelevo/src/app/features/auth/otp/otp.component.ts
+index 06cc0b2..50c71f0 100644
+--- a/autorelevo/src/app/features/auth/otp/otp.component.ts
++++ b/autorelevo/src/app/features/auth/otp/otp.component.ts
+@@ -499,13 +499,14 @@ export class OtpComponent implements OnDestroy {
+         if (ticket) {
+             const folio = this.k2Svc.mapearFolio(ticket);
+             this.solicitudSvc.setFolio(folio);
++            this.solicitudSvc.marcarConsulta(false);
+             if (this.puedeIrASeleccionSucursal(folio)) {
+               this.router.navigate(['/estado/sucursal'], { replaceUrl: true });
+             } else {
+               this.router.navigate(['/estado']);
+             }
+         } else {
+-          this.router.navigate(['/solicitud/servicio']);
++          this.router.navigate([this.solicitudSvc.enConsulta() ? '/solicitud/siniestro' : '/solicitud/servicio']);
+         }
+       },
+       error: () => {
+diff --git a/autorelevo/src/app/features/solicitud/num-siniestro/num-siniestro.component.ts b/autorelevo/src/app/features/solicitud/num-siniestro/num-siniestro.component.ts
+index 76ac23a..77777f1 100644
+--- a/autorelevo/src/app/features/solicitud/num-siniestro/num-siniestro.component.ts
++++ b/autorelevo/src/app/features/solicitud/num-siniestro/num-siniestro.component.ts
+@@ -246,6 +246,25 @@ export class NumSiniestroComponent {
+     numSiniestro: ['', [Validators.required, Validators.minLength(4)]],
+   });
+ 
++  private consultarFolio(numSiniestro: string, poliza: string): void {
++    this.k2Svc.buscarTicketActivo(poliza, numSiniestro).subscribe({
++      next: (ticket) => {
++        this.loading.set(false);
++        if (!ticket) {
++          this.apiError.set('No encontramos una solicitud en proceso para ese número de siniestro.');
++          return;
++        }
++        this.solicitudSvc.setFolio(this.k2Svc.mapearFolio(ticket));
++        this.solicitudSvc.marcarConsulta(false);
++        this.router.navigate(['/estado']);
++      },
++      error: () => {
++        this.loading.set(false);
++        this.apiError.set('No se pudo consultar tu solicitud. Intenta de nuevo.');
++      },
++    });
++  }
++
+   protected onContinuar(): void {
+     this.submitted = true;
+     this.apiError.set(null);
+@@ -256,6 +275,11 @@ export class NumSiniestroComponent {
+     const sess         = this.auth.session()!;
+     const poliza       = `${polizaK2(sess.numPoliza)}|${sess.inciso}`;
+ 
++    if (this.solicitudSvc.enConsulta()) {
++      this.consultarFolio(numSiniestro, polizaK2(sess.numPoliza));
++      return;
++    }
++
+     this.k2Svc.validateSiniestro(numSiniestro, poliza).subscribe({
+       next: () => {
+         this.solicitudSvc.setServicio(numSiniestro, this.solicitudSvc.motivo()!);
