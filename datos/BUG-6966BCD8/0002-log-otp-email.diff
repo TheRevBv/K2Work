@@ -1,0 +1,37 @@
+diff --git a/apiserver/ix/api/endpoints/autorelevo_auth.py b/apiserver/ix/api/endpoints/autorelevo_auth.py
+index 9a3443b..27f3947 100644
+--- a/apiserver/ix/api/endpoints/autorelevo_auth.py
++++ b/apiserver/ix/api/endpoints/autorelevo_auth.py
+@@ -16,6 +16,7 @@ from flask import g
+ 
+ from ix.api import wrappers, webserviceerror
+ from ix.config import config
++from ix import models as m
+ from ix.tools.utils.redis_cache import redis_client
+ from ix.tools.services.autorelevo_policy import AutorelevoPolicyService
+ import ix.svc.general as gtools
+@@ -123,6 +124,24 @@ def _send_email(email: str, otp_code: str) -> None:
+         body=html,
+     )
+     print(f"[autorelevo] send_email to={_mask_email(email)} mailgun_response={str(response)[:120]!r}")
++    _log_email(email, otp_code, response)
++
++
++def _log_email(email: str, otp_code: str, response) -> None:
++    """Registra el OTP por correo en web_service_log con el mismo texto que SMS_TRANSACTION."""
++    try:
++        g.s().add(m.WebServiceLog(
++            name="EMAIL_TRANSACTION",
++            from_=config.WS_MORFEO,
++            to_="MAILGUN",
++            request_=json.dumps({"email": email, "text": "Tu codigo de verificacion Auto Relevo es: " + otp_code + ". Valido por 5 minutos."}),
++            response_=str(response)[:500],
++            datetime=datetime.datetime.now(),
++        ))
++        g.s().commit()
++    except Exception as exc:
++        g.s().rollback()
++        logger.error("autorelevo _log_email: %s", exc)
+ 
+ def _build_jwt(poliza: str, inciso: str) -> str:
+     now = datetime.datetime.utcnow()
