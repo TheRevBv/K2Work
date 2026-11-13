@@ -25,3 +25,16 @@ description: Flujo git de K2 y el micrositio de autorelevo (ramas, commits, corr
 ## Ramas
 
 - Seguir la convención vigente del repo (revisar `git branch -a` y ramas recientes antes de nombrar la tuya). Si no es evidente, preguntar.
+- **Nunca crear worktrees** (`git worktree add`, `EnterWorktree`, `isolation: "worktree"` en agentes) ni copias del repo: saturan el disco. Se trabaja en el checkout único de cada repo y se cambia de contexto con `git switch`.
+- Ramas nuevas siempre desde `dev` actualizado: `git fetch origin && git switch -c <rama> origin/dev`.
+
+## Cambiar de rama con cambios sin commitear
+
+Autorizado sin preguntar (es local y reversible):
+
+1. Guardar el trabajo de la rama actual:
+   - poco o experimental → `git stash push -u -m "<rama>: <qué es>"`;
+   - avance real → commit local `wip: <qué es>` (sin push; luego se rehace con `--amend` o `reset --soft`).
+2. Registrarlo en `K2Work/docs/bitacora-ramas.md` (una línea por cambio: fecha, repo, rama, `stash@{n}`/hash, qué quedó pendiente).
+3. `git switch` a la otra rama (o crearla desde `origin/dev`).
+4. Al volver: `git stash pop` o deshacer el `wip`, y marcar la línea de la bitácora como retomada.
