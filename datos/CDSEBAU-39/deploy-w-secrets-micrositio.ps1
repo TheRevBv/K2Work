@@ -69,8 +69,20 @@ try {
   if ($Version) { $Argumentos += "--version=$Version" }
   Invoke-Paso '[4/4] gcloud app deploy' { gcloud.cmd @Argumentos }
 
-  Write-Host "`nDeploy completado. Busca la URL de la version arriba ('Deployed service') o con: gcloud app versions list --service=$Servicio --project=$($A.Proyecto)" -ForegroundColor Green
-  if (-not $Promote) { Write-Host "Sin trafico. Promover: gcloud app services set-traffic $Servicio --splits=<version>=1 --project=$($A.Proyecto)" }
+  $UrlServicio = "https://$Servicio-dot-$($A.Host)"
+  if ($Promote) {
+    Write-Host "`nDeploy completado y promovido: $UrlServicio" -ForegroundColor Green
+  } else {
+    $V = if ($Version) { $Version } else {
+      (gcloud.cmd app versions list "--service=$Servicio" "--project=$($A.Proyecto)" --sort-by=~version.createTime --limit=1 --format='value(id)' | Out-String).Trim()
+    }
+    $Sub = "$V-dot-$Servicio-dot-$($A.Proyecto)"
+    Write-Host "`nDeploy completado SIN trafico. $UrlServicio sigue sirviendo la version anterior." -ForegroundColor Yellow
+    # Arriba de 63 caracteres el certificado *.appspot.com no cubre la URL de version.
+    if ($Sub.Length -gt 63) { Write-Host "La URL de la version no sirve por HTTPS ($($Sub.Length) > 63 caracteres); para probarla hay que promoverla." -ForegroundColor Yellow }
+    else { Write-Host "Version: https://$Sub.ue.r.appspot.com" }
+    Write-Host "Promover: gcloud app services set-traffic $Servicio --splits=$V=1 --project=$($A.Proyecto)"
+  }
 }
 catch {
   Write-Host "ERROR: $_" -ForegroundColor Red

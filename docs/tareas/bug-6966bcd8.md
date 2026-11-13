@@ -3,12 +3,12 @@
 Reabierto 1x (12 nov 2026). Reporta Ian Téllez; asignado a Jeffrey Mikel.
 
 ## Causa
-- "Consultar estatus" (bienvenida y num-siniestro) navega a `/estado`; `authGuard` redirige a `/auth/login` y la intención se pierde.
-- Tras el OTP, `otp.component.ts#checkActiveTicket` busca un ticket abierto por póliza; si no hay, manda a `/solicitud/servicio`.
-- `num-siniestro.component.ts#onContinuar` valida el siniestro y siempre navega a `/solicitud/captura` (alta).
+No era código: la liga Dev (`micrositio-autorelevo-web`) seguía sirviendo `20261110t150319` (10 nov),
+anterior al fix de intención de Hector (`ebfcab5`, 11 nov: `auth.intencion` en `sessionStorage.ar_intencion`,
+`?flujo=estatus` desde bienvenida/guard, OTP no manda a `/solicitud` en consulta).
 
-## Fix (micrositio-autorelevo-real, rama dev, sin commit)
-- `SolicitudService.marcarConsulta/enConsulta`: bandera en `sessionStorage` (`ar_modo_consulta`), fuera de `ar_solicitud_state` porque ese estado se reinicia al cambiar la póliza en el login.
-- `authGuard` marca consulta cuando la URL bloqueada es `/estado*`; "Iniciar solicitud" la limpia.
-- OTP sin ticket abierto en modo consulta → `/solicitud/siniestro`.
-- num-siniestro en modo consulta → `buscarTicketActivo(poliza, siniestro)`; si hay ticket → `/estado`, si no → error, nunca captura.
+## Resolución (13 nov 2026)
+- Deploy de `dev` (`fc40e11`) como `20261113t130345` y promovido al 100 %.
+- e2e `autorelevo-e2e/src/qa/consultar-estatus.spec.ts` contra Dev con BI99038410 / 14164455 / inciso 1:
+  pasa; termina en "Seguimiento de solicitud" (folio K2-44), sin pasar por `/solicitud/*`.
+- `deploy.ps1` sin `-Promote` deja la versión sin tráfico; la URL por versión no sirve por HTTPS (67 > 63 caracteres).
