@@ -1,0 +1,1434 @@
+From 7acbc4c75bc5516b6031c2da408c4cdbe0afc123 Mon Sep 17 00:00:00 2001
+From: Joshua Morin <joshua.morinsalazar@chubb.com>
+Date: Mon, 27 Jul 2026 16:31:14 -0600
+Subject: [PATCH 01/11] feat(ahio): permitir que servicios programados pasen
+ validate_send_qonect
+
+---
+ apiserver/ix/svc/assistanceticket.py | 4 +---
+ 1 file changed, 1 insertion(+), 3 deletions(-)
+
+diff --git a/apiserver/ix/svc/assistanceticket.py b/apiserver/ix/svc/assistanceticket.py
+index a1c692f3..f6de2ceb 100644
+--- a/apiserver/ix/svc/assistanceticket.py
++++ b/apiserver/ix/svc/assistanceticket.py
+@@ -678,7 +678,6 @@ def send_sms_for_new_assistance_case(sponsor_name: str, case_phone: str, country
+ 
+ 
+ def validate_send_qonect(data, sponsor_name):
+-    programmed = data.get("programmed")
+     total_cost = data.get("connection")
+     manual_assignation = data.get("trigger")
+     service_id = data.get("service_id")
+@@ -689,8 +688,7 @@ def validate_send_qonect(data, sponsor_name):
+         )
+ 
+     if (
+-        programmed == 1
+-        or manual_assignation
++        manual_assignation
+         or data.get("addReimbursementServiceTicket")
+         or service_id not in QONECT_ALLOWED_SERVICE_IDS
+     ):
+-- 
+2.56.1
+
+
+From bd38029eb5e436a42e96795a831f574d9ef3f34c Mon Sep 17 00:00:00 2001
+From: Joshua Morin <joshua.morinsalazar@chubb.com>
+Date: Mon, 27 Jul 2026 16:35:07 -0600
+Subject: [PATCH 02/11] feat(ahio): enviar cita/fechaHoraCita en el payload de
+ servicio-propuesto para casos programados
+
+---
+ .../apps/ahio/strategies/propose_service.py   | 19 ++++++++++++++++++-
+ 1 file changed, 18 insertions(+), 1 deletion(-)
+
+diff --git a/apiserver/ix/apps/ahio/strategies/propose_service.py b/apiserver/ix/apps/ahio/strategies/propose_service.py
+index e4cf7db9..1320ed6f 100644
+--- a/apiserver/ix/apps/ahio/strategies/propose_service.py
++++ b/apiserver/ix/apps/ahio/strategies/propose_service.py
+@@ -1,4 +1,5 @@
+ import logging
++from datetime import datetime
+ 
+ from ix.apps.ahio.builder import AHIOProviderAssignmentBuilder
+ from ix.apps.ahio.strategies.interface import AHIOStrategyInterface
+@@ -15,6 +16,21 @@ logger = logging.getLogger(__name__)
+ 
+ class ProposeService(AHIOStrategyInterface, AHIOProviderAssignmentBuilder):
+ 
++    def _build_cita_fields(self) -> dict:
++        """Devuelve los campos cita/fechaHoraCita para el payload de AHIO cuando el caso es programado."""
++        if self.data.get("programmed") != 1:
++            return {}
++
++        programdate = self.data.get("programdate")
++        if not programdate:
++            return {}
++
++        fecha_hora = datetime.strptime(programdate[:19], "%Y-%m-%dT%H:%M:%S")
++        return {
++            "cita": True,
++            "fechaHoraCita": fecha_hora.strftime("%d/%m/%Y %H:%M:%S"),
++        }
++
+     def __process_data(self):
+         """It is the center of the class, here the changes to assign or remove a user from a case will be processed.
+         @return response: Object Response of service AHIO.
+@@ -32,7 +48,8 @@ class ProposeService(AHIOStrategyInterface, AHIOProviderAssignmentBuilder):
+                 "destino": self.set_data_destination(),
+                 "relacionServicios": self.get_relation_services(),
+                 "clienteNA": self.get_data_client(),
+-                "automovil": self.set_data_vehicle()
++                "automovil": self.set_data_vehicle(),
++                **self._build_cita_fields(),
+             }
+         }
+ 
+-- 
+2.56.1
+
+
+From f9ce8ff70b3c1b71907ca3290793ab206202964c Mon Sep 17 00:00:00 2001
+From: Joshua Morin <joshua.morinsalazar@chubb.com>
+Date: Mon, 27 Jul 2026 16:38:13 -0600
+Subject: [PATCH 03/11] =?UTF-8?q?feat(ahio):=20tratar=20cita=20registrada?=
+ =?UTF-8?q?=20sin=20proveedor=20como=20=C3=A9xito=20en=20vez=20de=20rechaz?=
+ =?UTF-8?q?o?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ .../apps/ahio/strategies/propose_service.py   | 26 +++++++++++++++++++
+ 1 file changed, 26 insertions(+)
+
+diff --git a/apiserver/ix/apps/ahio/strategies/propose_service.py b/apiserver/ix/apps/ahio/strategies/propose_service.py
+index 1320ed6f..440997de 100644
+--- a/apiserver/ix/apps/ahio/strategies/propose_service.py
++++ b/apiserver/ix/apps/ahio/strategies/propose_service.py
+@@ -56,6 +56,18 @@ class ProposeService(AHIOStrategyInterface, AHIOProviderAssignmentBuilder):
+         response = self.api_ahio.propose_service(payload=payload)
+         return response
+     
++    def __build_cita_registered_ticket(self, id_servicio) -> None:
++        last_ticket = get_last_ticket_by_case_id(case_id=self.assistance_case.id)
++        data_new_ticket = {
++            "case_id": self.assistance_case.id,
++            "ticket_type": None,
++            "service_id": last_ticket.service_id,
++            "comment": f"AHIO registró la cita. AHIO_CITA_ID:{id_servicio}",
++        }
++        assistance_ticket_factory_comment = AssistanceTicketFactory().factory(ticket_type=19)
++        assistance_ticket_factory_comment().set_data(data_new_ticket).set_main_ticket(last_ticket).set_case(
++            self.assistance_case).execute()
++
+     def __validate_response(self, response) -> ProviderAssignmentResult:
+         if response is None:
+             return ProviderAssignmentResult(
+@@ -95,6 +107,20 @@ class ProposeService(AHIOStrategyInterface, AHIOProviderAssignmentBuilder):
+                 success=False,
+                 message=AhioMessages.NOT_PROVIDERS_IN_K2.format(str(self.assistance_case.id))
+             )
++
++        id_servicio = (
++            response
++            .get(AhioDefinitions.RESPONSE, {})
++            .get(AhioDefinitions.SERVICE, {})
++            .get(AhioDefinitions.SERVICE_ID)
++        )
++        if self.data.get("programmed") == 1 and id_servicio:
++            self.__build_cita_registered_ticket(id_servicio)
++            return ProviderAssignmentResult(
++                success=True,
++                message="Cita registrada en AHIO"
++            )
++
+         last_ticket = get_last_ticket_by_case_id(case_id=self.assistance_case.id)
+         user_qonect = get_user_by_username(USERNAME_AHIO)
+         data_new_ticket = {
+-- 
+2.56.1
+
+
+From 848c1505c64fbf5ac7574b82398b49f7170b1bd5 Mon Sep 17 00:00:00 2001
+From: Joshua Morin <joshua.morinsalazar@chubb.com>
+Date: Mon, 27 Jul 2026 16:41:27 -0600
+Subject: [PATCH 04/11] =?UTF-8?q?feat(ahio):=20agregar=20strategy=20para?=
+ =?UTF-8?q?=20disparar=20asignaci=C3=B3n=20de=20citas=20(asignar-servicio-?=
+ =?UTF-8?q?cita)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ apiserver/ix/apps/ahio/factory.py             |  2 +
+ apiserver/ix/apps/ahio/strategies/__init__.py |  3 +-
+ .../strategies/assign_appointment_service.py  | 50 +++++++++++++++++++
+ apiserver/ix/apps/ahio/wrapper.py             |  4 ++
+ 4 files changed, 58 insertions(+), 1 deletion(-)
+ create mode 100644 apiserver/ix/apps/ahio/strategies/assign_appointment_service.py
+
+diff --git a/apiserver/ix/apps/ahio/factory.py b/apiserver/ix/apps/ahio/factory.py
+index 5a1b528d..4d2d3b65 100644
+--- a/apiserver/ix/apps/ahio/factory.py
++++ b/apiserver/ix/apps/ahio/factory.py
+@@ -1,5 +1,6 @@
+ from ix.apps.ahio.strategies.cancel_service import AhioCancelServiceAssignment
+ from ix.apps.ahio.strategies.propose_service import ProposeService
++from ix.apps.ahio.strategies.assign_appointment_service import AhioAssignAppointmentService
+ from ix.apps.ahio.strategies import AhioStrategyCode
+ 
+ 
+@@ -8,6 +9,7 @@ class AHIOFactory:
+     AHIO_process_type = {
+         AhioStrategyCode.AHIO_PROPOSESERVICE: ProposeService,
+         AhioStrategyCode.AHIO_CANCEL_SERVICE: AhioCancelServiceAssignment,
++        AhioStrategyCode.AHIO_ASSIGN_APPOINTMENT: AhioAssignAppointmentService,
+     }
+ 
+     def factory(self, process_type: AhioStrategyCode):
+diff --git a/apiserver/ix/apps/ahio/strategies/__init__.py b/apiserver/ix/apps/ahio/strategies/__init__.py
+index acbfe66f..28e8d26d 100644
+--- a/apiserver/ix/apps/ahio/strategies/__init__.py
++++ b/apiserver/ix/apps/ahio/strategies/__init__.py
+@@ -6,4 +6,5 @@ class AhioStrategyCode(Enum):
+     Enumera los códigos de las estrategias para los tickets de asistencia de AHIO.
+     """
+     AHIO_PROPOSESERVICE = 1
+-    AHIO_CANCEL_SERVICE = 2
+\ No newline at end of file
++    AHIO_CANCEL_SERVICE = 2
++    AHIO_ASSIGN_APPOINTMENT = 3
+\ No newline at end of file
+diff --git a/apiserver/ix/apps/ahio/strategies/assign_appointment_service.py b/apiserver/ix/apps/ahio/strategies/assign_appointment_service.py
+new file mode 100644
+index 00000000..8068a156
+--- /dev/null
++++ b/apiserver/ix/apps/ahio/strategies/assign_appointment_service.py
+@@ -0,0 +1,50 @@
++from ix.apps.ahio.builder import AHIOProviderAssignmentBuilder
++from ix.apps.ahio.strategies.interface import AHIOStrategyInterface
++from ix.apps.ahio.utils import get_provider_coverage_site_by_sap_code
++from ix.apps.ahio.variables import AhioDefinitions
++from ix.apps.providers.services import assign_provider
++from ix.apps.providers.types import ProviderAssignmentResult
++
++
++class AhioAssignAppointmentService(AHIOStrategyInterface, AHIOProviderAssignmentBuilder):
++
++    def __trigger_assignment(self):
++        id_servicio = self.data.get("idServicio")
++        return self.api_ahio.assign_appointment_service(id_servicio)
++
++    def __fetch_assigned_sap_code(self):
++        id_servicio = self.data.get("idServicio")
++        response = self.api_ahio.get_service(id_servicio)
++        return (
++            response
++            .get(AhioDefinitions.RESPONSE, {})
++            .get(AhioDefinitions.CRANE, {})
++            .get(AhioDefinitions.SAP_CODE)
++        )
++
++    def execute(self, *args, **kwargs) -> ProviderAssignmentResult:
++        """Dispara la asignación de una cita en AHIO y, si ya hay proveedor, la registra en K2."""
++        self.__trigger_assignment()
++        sap_code = self.__fetch_assigned_sap_code()
++
++        if not sap_code:
++            return ProviderAssignmentResult(
++                success=False,
++                message="AHIO aún no asigna proveedor para la cita"
++            )
++
++        provider, provider_site, coverage_id = get_provider_coverage_site_by_sap_code(sap_code=sap_code)
++        if not (provider and provider_site and coverage_id):
++            return ProviderAssignmentResult(
++                success=False,
++                message=f"No se encontró un proveedor en K2 para caso {self.assistance_case.id}"
++            )
++
++        ahio_response = self.api_ahio.get_service(self.data.get("idServicio"))
++        return assign_provider(
++            case_id=self.assistance_case.id,
++            ahio_response=ahio_response,
++            provider=provider,
++            provider_site=provider_site,
++            coverage_id=coverage_id
++        )
+diff --git a/apiserver/ix/apps/ahio/wrapper.py b/apiserver/ix/apps/ahio/wrapper.py
+index 8d6605a0..c1821b8b 100644
+--- a/apiserver/ix/apps/ahio/wrapper.py
++++ b/apiserver/ix/apps/ahio/wrapper.py
+@@ -79,3 +79,7 @@ class AHIOWrapper(AHIOService):
+ 
+     def accept_service(self, payload):
+         return self.post("integracion/servicios/aceptar-servicio", payload)
++
++    def assign_appointment_service(self, service_id):
++        data = {"idServicio": service_id}
++        return self.put("integracion/servicios/asignar-servicio-cita", data)
+-- 
+2.56.1
+
+
+From 0af39548327c116f1de883dd3e69e913887affd6 Mon Sep 17 00:00:00 2001
+From: Joshua Morin <joshua.morinsalazar@chubb.com>
+Date: Mon, 27 Jul 2026 16:44:29 -0600
+Subject: [PATCH 05/11] feat(ahio): agregar query para encontrar citas
+ pendientes de disparar en la ventana definida
+
+---
+ apiserver/ix/apps/ahio/queries.py | 44 +++++++++++++++++++++++++++++++
+ 1 file changed, 44 insertions(+)
+
+diff --git a/apiserver/ix/apps/ahio/queries.py b/apiserver/ix/apps/ahio/queries.py
+index 8d46a92c..42200dd0 100644
+--- a/apiserver/ix/apps/ahio/queries.py
++++ b/apiserver/ix/apps/ahio/queries.py
+@@ -89,3 +89,47 @@ def get_ahio_service_id(case_id: int):
+         return None
+     return ticket.comment.split(AHIO_ID_PREFIX)[1].strip()
+ 
++
++AHIO_CITA_ID_PREFIX = "AHIO_CITA_ID:"
++
++
++def get_pending_appointment_cases(window_end: datetime) -> list:
++    """Casos con cita registrada en AHIO, aún sin proveedor asignado, cuya hora programada
++    ya está dentro de la ventana de disparo (datetime del ticket PROGRAMMED <= window_end)."""
++    assigned_ticket = aliased(AssistanceTicket)
++    programmed_ticket = aliased(AssistanceTicket)
++
++    rows = (
++        g.s()
++        .query(
++            AssistanceTicket.case_id,
++            AssistanceTicket.service_id,
++            AssistanceTicket.comment,
++        )
++        .join(AssistanceCase, AssistanceCase.id == AssistanceTicket.case_id)
++        .filter(
++            AssistanceTicket.comment.contains(AHIO_CITA_ID_PREFIX),
++            AssistanceCase.status == AssistanceCase.STATUS_OPEN,
++            ~exists().where(
++                (assigned_ticket.case_id == AssistanceTicket.case_id)
++                & (assigned_ticket.comment.contains(AHIO_ID_PREFIX))
++            ),
++            exists().where(
++                (programmed_ticket.case_id == AssistanceTicket.case_id)
++                & (programmed_ticket.ticket_type == AssistanceTicket.PROGRAMMED)
++                & (programmed_ticket.datetime <= window_end)
++            ),
++        )
++    )
++
++    results = []
++    for row in rows:
++        ahio_id = row[2].split(AHIO_CITA_ID_PREFIX)[1].strip()
++        results.append({
++            "case_id": row[0],
++            "service_id": row[1],
++            "ahio_service_id": ahio_id,
++        })
++
++    return results
++
+-- 
+2.56.1
+
+
+From 60ae730df9e0fdc4d69b410dfd0203fabe8cf4e1 Mon Sep 17 00:00:00 2001
+From: Joshua Morin <joshua.morinsalazar@chubb.com>
+Date: Mon, 27 Jul 2026 16:48:28 -0600
+Subject: [PATCH 06/11] =?UTF-8?q?feat(ahio):=20agregar=20job=20y=20cron=20?=
+ =?UTF-8?q?para=20disparar=20asignaci=C3=B3n=20de=20citas=201.5h=20antes?=
+ =?UTF-8?q?=20de=20la=20hora=20programada?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ apiserver/cron.yaml                   |  4 +++
+ apiserver/ix/apps/ahio/jobs.py        | 47 +++++++++++++++++++++++++--
+ apiserver/ix/vps/endpoints/cronjob.py |  8 ++++-
+ 3 files changed, 56 insertions(+), 3 deletions(-)
+
+diff --git a/apiserver/cron.yaml b/apiserver/cron.yaml
+index 0a351bfe..1733be4f 100644
+--- a/apiserver/cron.yaml
++++ b/apiserver/cron.yaml
+@@ -28,6 +28,10 @@ cron:
+   url: /api/bulk/ahio_service_status
+   schedule: every 1 mins
+ 
++- description: "Cron job to trigger AHIO appointment (cita) assignment"
++  url: /api/bulk/ahio_appointment_assignment
++  schedule: every 10 mins
++
+ - description: "Cron job to auto-assign dispatchers to pending cases"
+   url: /api/bulk/assistance_cases_follow_up
+   schedule: every 1 mins
+diff --git a/apiserver/ix/apps/ahio/jobs.py b/apiserver/ix/apps/ahio/jobs.py
+index 48237bb5..3f8dbc72 100644
+--- a/apiserver/ix/apps/ahio/jobs.py
++++ b/apiserver/ix/apps/ahio/jobs.py
+@@ -11,8 +11,12 @@ from ix.config import config
+ from ix.models import User
+ from ix.apps.ahio.variables import SERVICE_CRANE, AhioDefinitions, AhioMessageLogs, LBL_CASE_ID, USERNAME_AHIO, HEADERS_JSON
+ from ix.apps.ahio.wrapper import AHIOWrapper
+-from ix.apps.ahio.queries import get_open_ahio_cases
+-from ix.apps.assistance_tickets.services import get_first_ticket_by_case_id_and_ticket_type
++from ix.apps.ahio.queries import get_open_ahio_cases, get_pending_appointment_cases
++from ix.apps.ahio.factory import AHIOFactory
++from ix.apps.ahio.strategies import AhioStrategyCode
++from ix.apps.ahio.utils import get_provider_coverage_site_by_sap_code
++from ix.apps.assistance_tickets.services import get_first_ticket_by_case_id_and_ticket_type, get_last_ticket_by_case_id
++from ix.apps.providers.services import assign_provider
+ from ix.models.assistanceticket import AssistanceTicket
+ 
+ 
+@@ -150,3 +154,42 @@ def _create_ahio_ticket(case, ticket_type, comment, user_id, date_time):
+     new_ticket.add()
+     g.s().flush()
+     g.s().commit()
++
++
++APPOINTMENT_TRIGGER_WINDOW = timedelta(hours=1.5)
++
++
++def _assign_appointment_case(case, api):
++    response = api.get_service(case["ahio_service_id"])
++    sap_code = response.get(AhioDefinitions.RESPONSE, {}).get(AhioDefinitions.CRANE, {}).get(AhioDefinitions.SAP_CODE)
++
++    if sap_code:
++        provider, provider_site, coverage_id = get_provider_coverage_site_by_sap_code(sap_code=sap_code)
++        if provider and provider_site and coverage_id:
++            assign_provider(
++                case_id=case["case_id"],
++                ahio_response=response,
++                provider=provider,
++                provider_site=provider_site,
++                coverage_id=coverage_id
++            )
++        return
++
++    strategy_cls = AHIOFactory().factory(AhioStrategyCode.AHIO_ASSIGN_APPOINTMENT)
++    last_ticket = get_last_ticket_by_case_id(case_id=case["case_id"])
++    strategy = strategy_cls().set_data({"idServicio": case["ahio_service_id"]}).set_main_ticket(last_ticket).set_case()
++    strategy.execute()
++
++
++def trigger_appointment_assignments():
++    """Dispara la asignación de proveedor para citas cuya hora programada ya está
++    dentro de la ventana de 1.5 horas antes de fechaHoraCita."""
++    api = AHIOWrapper(config.AHIO_BASE_URL, config.AHIO_AUTH_TOKEN)
++    window_end = datetime.now(timezone.utc) + APPOINTMENT_TRIGGER_WINDOW
++
++    pending_cases = get_pending_appointment_cases(window_end=window_end)
++    for case in pending_cases:
++        try:
++            _assign_appointment_case(case, api)
++        except Exception as e:
++            logging.error(e)
+diff --git a/apiserver/ix/vps/endpoints/cronjob.py b/apiserver/ix/vps/endpoints/cronjob.py
+index 4fe22a82..64a70d9f 100644
+--- a/apiserver/ix/vps/endpoints/cronjob.py
++++ b/apiserver/ix/vps/endpoints/cronjob.py
+@@ -54,7 +54,7 @@ from ix.utils import gen_csv, gen_xlsx
+ from ix.apps.assistance_cases.jobs import get_and_process_cases_with_limit_completed_for_tracking, send_home_assistance_reminder
+ 
+ 
+-from ix.apps.ahio.jobs import process_ahio_service_status
++from ix.apps.ahio.jobs import process_ahio_service_status, trigger_appointment_assignments
+ 
+ @wrappers.api_resource('/bulk/run-report-attachment', 'GET')
+ def cron_report_attachment():
+@@ -801,6 +801,12 @@ def ahio_service_status():
+     return process_ahio_service_status()
+ 
+ 
++@wrappers.api_resource('/bulk/ahio_appointment_assignment', 'GET')
++@wrappers.cronjob_only()
++def ahio_appointment_assignment():
++    return trigger_appointment_assignments()
++
++
+ @wrappers.api_resource('/bulk/send_home_assistance_reminder', 'GET')
+ @wrappers.cronjob_validation
+ def send_home_assistance_reminder_cron():
+-- 
+2.56.1
+
+
+From b215270d92648e99eee22fa3495b01a882c8b46e Mon Sep 17 00:00:00 2001
+From: Joshua Morin <joshua.morinsalazar@chubb.com>
+Date: Mon, 27 Jul 2026 16:58:13 -0600
+Subject: [PATCH 07/11] =?UTF-8?q?test(ahio):=20agregar=20pruebas=20para=20?=
+ =?UTF-8?q?asignaci=C3=B3n=20de=20programados/cita=20v=C3=ADa=20AHIO?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ .../ahio/test_assign_appointment_service.py   |  79 ++++++++++++++
+ apiserver/ix/tests/ahio/test_jobs.py          |  78 +++++++++++++
+ .../ix/tests/ahio/test_propose_service.py     | 103 ++++++++++++++++++
+ apiserver/ix/tests/ahio/test_queries.py       |  27 +++++
+ apiserver/ix/tests/svc/__init__.py            |   0
+ ...t_assistanceticket_validate_send_qonect.py |  75 +++++++++++++
+ 6 files changed, 362 insertions(+)
+ create mode 100644 apiserver/ix/tests/ahio/test_assign_appointment_service.py
+ create mode 100644 apiserver/ix/tests/ahio/test_jobs.py
+ create mode 100644 apiserver/ix/tests/ahio/test_propose_service.py
+ create mode 100644 apiserver/ix/tests/ahio/test_queries.py
+ create mode 100644 apiserver/ix/tests/svc/__init__.py
+ create mode 100644 apiserver/ix/tests/svc/test_assistanceticket_validate_send_qonect.py
+
+diff --git a/apiserver/ix/tests/ahio/test_assign_appointment_service.py b/apiserver/ix/tests/ahio/test_assign_appointment_service.py
+new file mode 100644
+index 00000000..1fc3ed1f
+--- /dev/null
++++ b/apiserver/ix/tests/ahio/test_assign_appointment_service.py
+@@ -0,0 +1,79 @@
++from unittest.mock import MagicMock, patch
++
++from ix.apps.ahio.wrapper import AHIOWrapper
++from ix.apps.ahio.strategies import AhioStrategyCode
++from ix.apps.ahio.strategies.assign_appointment_service import AhioAssignAppointmentService
++from ix.apps.providers.types import ProviderAssignmentResult
++
++
++class TestAHIOWrapperAssignAppointmentService:
++
++    def test_assign_appointment_service_calls_put_with_id_servicio(self):
++        wrapper = AHIOWrapper("https://ahio.mx/ws-ahio-erp/", "token")
++
++        with patch.object(wrapper, "put") as mock_put:
++            mock_put.return_value = {"estatus": "OK", "mensaje": "Operación Exitosa"}
++            result = wrapper.assign_appointment_service(879090)
++
++        mock_put.assert_called_once_with(
++            "integracion/servicios/asignar-servicio-cita",
++            {"idServicio": 879090},
++        )
++        assert result == {"estatus": "OK", "mensaje": "Operación Exitosa"}
++
++
++class TestAhioStrategyCodeAssignAppointment:
++
++    def test_ahio_assign_appointment_enum_value(self):
++        assert AhioStrategyCode.AHIO_ASSIGN_APPOINTMENT.value == 3
++
++
++class TestAhioAssignAppointmentService:
++
++    def test_execute_assigns_provider_when_sap_code_available_after_trigger(self):
++        strategy = AhioAssignAppointmentService()
++        strategy.data = {"idServicio": 879090}
++        strategy.assistance_case = MagicMock(id=42)
++        strategy.api_ahio = MagicMock()
++        strategy.api_ahio.assign_appointment_service.return_value = {
++            "estatus": "OK", "mensaje": "Operación Exitosa"
++        }
++        strategy.api_ahio.get_service.return_value = {
++            "respuesta": {"grua": {"codigoProveedor": "P123"}}
++        }
++
++        with patch(
++            "ix.apps.ahio.strategies.assign_appointment_service.get_provider_coverage_site_by_sap_code"
++        ) as mock_get_coverage, patch(
++            "ix.apps.ahio.strategies.assign_appointment_service.assign_provider"
++        ) as mock_assign_provider:
++            mock_get_coverage.return_value = (MagicMock(), MagicMock(), 7)
++            mock_assign_provider.return_value = ProviderAssignmentResult(success=True, message="ok")
++
++            result = strategy.execute()
++
++        strategy.api_ahio.assign_appointment_service.assert_called_once_with(879090)
++        strategy.api_ahio.get_service.assert_called_once_with(879090)
++        mock_assign_provider.assert_called_once()
++        assert result.success is True
++
++    def test_execute_does_not_assign_when_sap_code_not_yet_available(self):
++        strategy = AhioAssignAppointmentService()
++        strategy.data = {"idServicio": 879090}
++        strategy.assistance_case = MagicMock(id=42)
++        strategy.api_ahio = MagicMock()
++        strategy.api_ahio.assign_appointment_service.return_value = {
++            "estatus": "OK", "mensaje": "Operación Exitosa"
++        }
++        strategy.api_ahio.get_service.return_value = {
++            "respuesta": {"grua": {"codigoProveedor": None}}
++        }
++
++        with patch(
++            "ix.apps.ahio.strategies.assign_appointment_service.assign_provider"
++        ) as mock_assign_provider:
++            result = strategy.execute()
++
++        mock_assign_provider.assert_not_called()
++        assert result.success is False
++        assert result.message == "AHIO aún no asigna proveedor para la cita"
+diff --git a/apiserver/ix/tests/ahio/test_jobs.py b/apiserver/ix/tests/ahio/test_jobs.py
+new file mode 100644
+index 00000000..7832c134
+--- /dev/null
++++ b/apiserver/ix/tests/ahio/test_jobs.py
+@@ -0,0 +1,78 @@
++from unittest.mock import MagicMock, patch
++
++from ix.apps.ahio.jobs import trigger_appointment_assignments
++
++
++class TestTriggerAppointmentAssignments:
++
++    @patch("ix.apps.ahio.jobs.assign_provider")
++    @patch("ix.apps.ahio.jobs.AHIOFactory")
++    @patch("ix.apps.ahio.jobs.get_pending_appointment_cases")
++    def test_assigns_directly_when_already_has_sap_code(
++        self, mock_get_pending, mock_factory, mock_assign_provider
++    ):
++        mock_get_pending.return_value = [
++            {"case_id": 10, "service_id": 332, "ahio_service_id": "879090"}
++        ]
++        api = MagicMock()
++        api.get_service.return_value = {
++            "respuesta": {"grua": {"codigoProveedor": "P123"}}
++        }
++
++        with patch("ix.apps.ahio.jobs.AHIOWrapper", return_value=api), \
++             patch("ix.apps.ahio.jobs.get_provider_coverage_site_by_sap_code") as mock_coverage:
++            mock_coverage.return_value = (MagicMock(), MagicMock(), 7)
++
++            trigger_appointment_assignments()
++
++        mock_assign_provider.assert_called_once()
++        mock_factory.return_value.factory.assert_not_called()
++
++    @patch("ix.apps.ahio.jobs.assign_provider")
++    @patch("ix.apps.ahio.jobs.AHIOFactory")
++    @patch("ix.apps.ahio.jobs.get_pending_appointment_cases")
++    def test_triggers_appointment_strategy_when_no_sap_code_yet(
++        self, mock_get_pending, mock_factory, mock_assign_provider
++    ):
++        mock_get_pending.return_value = [
++            {"case_id": 10, "service_id": 332, "ahio_service_id": "879090"}
++        ]
++        api = MagicMock()
++        api.get_service.return_value = {"respuesta": {"grua": {"codigoProveedor": None}}}
++
++        strategy_cls = MagicMock()
++        mock_factory.return_value.factory.return_value = strategy_cls
++
++        with patch("ix.apps.ahio.jobs.AHIOWrapper", return_value=api), \
++             patch("ix.apps.ahio.jobs.get_last_ticket_by_case_id"):
++            trigger_appointment_assignments()
++
++        mock_assign_provider.assert_not_called()
++        strategy_cls.return_value.set_data.assert_called_once_with(
++            {"idServicio": "879090"}
++        )
++        strategy_cls.return_value.set_data.return_value.set_main_ticket.return_value.set_case.return_value.execute.assert_called_once()
++
++    @patch("ix.apps.ahio.jobs.assign_provider")
++    @patch("ix.apps.ahio.jobs.AHIOFactory")
++    @patch("ix.apps.ahio.jobs.get_pending_appointment_cases")
++    def test_one_failing_case_does_not_stop_the_rest(
++        self, mock_get_pending, mock_factory, mock_assign_provider
++    ):
++        mock_get_pending.return_value = [
++            {"case_id": 10, "service_id": 332, "ahio_service_id": "879090"},
++            {"case_id": 11, "service_id": 332, "ahio_service_id": "879091"},
++        ]
++        api = MagicMock()
++        api.get_service.side_effect = [Exception("boom"), {"respuesta": {"grua": {"codigoProveedor": None}}}]
++
++        strategy_cls = MagicMock()
++        mock_factory.return_value.factory.return_value = strategy_cls
++
++        with patch("ix.apps.ahio.jobs.AHIOWrapper", return_value=api), \
++             patch("ix.apps.ahio.jobs.get_last_ticket_by_case_id"):
++            trigger_appointment_assignments()
++
++        strategy_cls.return_value.set_data.assert_called_once_with(
++            {"idServicio": "879091"}
++        )
+diff --git a/apiserver/ix/tests/ahio/test_propose_service.py b/apiserver/ix/tests/ahio/test_propose_service.py
+new file mode 100644
+index 00000000..7a406064
+--- /dev/null
++++ b/apiserver/ix/tests/ahio/test_propose_service.py
+@@ -0,0 +1,103 @@
++from unittest.mock import MagicMock, patch
++
++from ix.apps.ahio.strategies.propose_service import ProposeService
++
++
++class TestProposeServiceCitaFields:
++
++    def test_build_cita_fields_returns_empty_when_not_programmed(self):
++        strategy = ProposeService()
++        strategy.data = {"programmed": 0}
++
++        result = strategy._build_cita_fields()
++
++        assert result == {}
++
++    def test_build_cita_fields_returns_cita_true_and_formatted_date(self):
++        strategy = ProposeService()
++        strategy.data = {
++            "programmed": 1,
++            "programdate": "2025-10-14T20:00:00",
++        }
++
++        result = strategy._build_cita_fields()
++
++        assert result == {
++            "cita": True,
++            "fechaHoraCita": "14/10/2025 20:00:00",
++        }
++
++    def test_build_cita_fields_strips_timezone_suffix_from_programdate(self):
++        strategy = ProposeService()
++        strategy.data = {
++            "programmed": 1,
++            "programdate": "2025-10-14T20:00:00.123456",
++        }
++
++        result = strategy._build_cita_fields()
++
++        assert result == {
++            "cita": True,
++            "fechaHoraCita": "14/10/2025 20:00:00",
++        }
++
++
++class TestProposeServiceValidateResponseCita:
++
++    @patch("ix.apps.ahio.strategies.propose_service.AssistanceTicketFactory")
++    def test_cita_without_provider_yet_is_treated_as_success(self, mock_factory):
++        mock_assign_comment_cls = MagicMock()
++        mock_factory.return_value.factory.return_value = mock_assign_comment_cls
++
++        strategy = ProposeService()
++        strategy.data = {"programmed": 1, "service_id": 332}
++        strategy.assistance_case = MagicMock(id=42)
++
++        with patch(
++            "ix.apps.ahio.strategies.propose_service.get_last_ticket_by_case_id"
++        ) as mock_get_last_ticket:
++            mock_get_last_ticket.return_value = MagicMock(id=100, service_id=332)
++
++            response = {
++                "estatus": "OK",
++                "mensaje": "Operación Exitosa",
++                "respuesta": {
++                    "grua": {"id": None, "numEconomicoGrua": 0, "idProveedor": 0, "razonSocial": None},
++                    "servicio": {"idServicio": 879790, "estatus": 0},
++                },
++            }
++
++            result = strategy._ProposeService__validate_response(response)
++
++        assert result.success is True
++        assert result.message == "Cita registrada en AHIO"
++        mock_assign_comment_cls.return_value.set_data.assert_called_once()
++        called_data = mock_assign_comment_cls.return_value.set_data.call_args[0][0]
++        assert called_data["comment"] == "AHIO registró la cita. AHIO_CITA_ID:879790"
++
++    def test_non_programmed_without_provider_still_treated_as_rejection(self):
++        strategy = ProposeService()
++        strategy.data = {"programmed": 0, "service_id": 332}
++        strategy.assistance_case = MagicMock(id=42)
++
++        with patch(
++            "ix.apps.ahio.strategies.propose_service.get_last_ticket_by_case_id"
++        ) as mock_get_last_ticket, patch(
++            "ix.apps.ahio.strategies.propose_service.AssistanceTicketFactory"
++        ), patch(
++            "ix.apps.ahio.strategies.propose_service.get_user_by_username"
++        ):
++            mock_get_last_ticket.return_value = MagicMock(id=100, service_id=332)
++
++            response = {
++                "estatus": "OK",
++                "mensaje": "No existen gruas que cumplan con el tiempo de calidad establecido",
++                "respuesta": {
++                    "grua": {"id": None, "numEconomicoGrua": 0, "idProveedor": 0, "razonSocial": None},
++                    "servicio": {"idServicio": 0, "estatus": 0},
++                },
++            }
++
++            result = strategy._ProposeService__validate_response(response)
++
++        assert result.success is False
+diff --git a/apiserver/ix/tests/ahio/test_queries.py b/apiserver/ix/tests/ahio/test_queries.py
+new file mode 100644
+index 00000000..18d09e42
+--- /dev/null
++++ b/apiserver/ix/tests/ahio/test_queries.py
+@@ -0,0 +1,27 @@
++from datetime import datetime
++from unittest.mock import MagicMock, patch
++
++from ix.app import app
++from ix.apps.ahio.queries import get_pending_appointment_cases, AHIO_CITA_ID_PREFIX
++
++
++class TestGetPendingAppointmentCases:
++
++    def test_ahio_cita_id_prefix_value(self):
++        assert AHIO_CITA_ID_PREFIX == "AHIO_CITA_ID:"
++
++    def test_extracts_case_id_service_id_and_ahio_service_id_from_query_results(self):
++        window_end = datetime(2025, 10, 14, 20, 0, 0)
++
++        mock_row = (10, 332, "AHIO registró la cita. AHIO_CITA_ID:879090")
++        mock_query = MagicMock()
++        mock_query.join.return_value = mock_query
++        mock_query.filter.return_value = mock_query
++        mock_query.__iter__.return_value = iter([mock_row])
++
++        with app.app_context():
++            with patch("ix.apps.ahio.queries.g", new_callable=MagicMock) as mock_g:
++                mock_g.s.return_value.query.return_value = mock_query
++                result = get_pending_appointment_cases(window_end=window_end)
++
++        assert result == [{"case_id": 10, "service_id": 332, "ahio_service_id": "879090"}]
+diff --git a/apiserver/ix/tests/svc/__init__.py b/apiserver/ix/tests/svc/__init__.py
+new file mode 100644
+index 00000000..e69de29b
+diff --git a/apiserver/ix/tests/svc/test_assistanceticket_validate_send_qonect.py b/apiserver/ix/tests/svc/test_assistanceticket_validate_send_qonect.py
+new file mode 100644
+index 00000000..2ac9ef0b
+--- /dev/null
++++ b/apiserver/ix/tests/svc/test_assistanceticket_validate_send_qonect.py
+@@ -0,0 +1,75 @@
++from unittest.mock import MagicMock, patch
++
++from ix.app import app
++from ix.svc.assistanceticket import validate_send_qonect
++
++
++def _base_data(**overrides):
++    data = {
++        "programmed": 0,
++        "connection": 0,
++        "trigger": False,
++        "addReimbursementServiceTicket": False,
++        "service_id": 332,
++        "comment": "",
++    }
++    data.update(overrides)
++    return data
++
++
++class TestValidateSendQonectProgrammed:
++
++    @patch("ix.svc.assistanceticket.validate_qonect_questionnaire")
++    @patch("ix.svc.assistanceticket.QONECT_ALLOWED_SERVICE_IDS", {332})
++    def test_programmed_case_is_no_longer_blocked_by_default(self, mock_validate_questionnaire):
++        mock_validate_questionnaire.return_value = True
++        data = _base_data(programmed=1)
++
++        with app.app_context():
++            from flask import g
++            g.current_user = MagicMock(email="ajustador@chubbservicios.com")
++            result = validate_send_qonect(data, sponsor_name="Chubb")
++
++        assert result is True
++        mock_validate_questionnaire.assert_called_once_with(
++            service_id=332, comment="", data=data
++        )
++
++    @patch("ix.svc.assistanceticket.validate_qonect_questionnaire")
++    @patch("ix.svc.assistanceticket.QONECT_ALLOWED_SERVICE_IDS", {332})
++    def test_programmed_case_still_blocked_if_service_id_not_allowed(self, mock_validate_questionnaire):
++        data = _base_data(programmed=1, service_id=999)
++
++        with app.app_context():
++            from flask import g
++            g.current_user = MagicMock(email="ajustador@chubbservicios.com")
++            result = validate_send_qonect(data, sponsor_name="Chubb")
++
++        assert result is False
++        mock_validate_questionnaire.assert_not_called()
++
++    @patch("ix.svc.assistanceticket.validate_qonect_questionnaire")
++    @patch("ix.svc.assistanceticket.QONECT_ALLOWED_SERVICE_IDS", {332})
++    def test_non_programmed_case_still_works_as_before(self, mock_validate_questionnaire):
++        mock_validate_questionnaire.return_value = True
++        data = _base_data(programmed=0)
++
++        with app.app_context():
++            from flask import g
++            g.current_user = MagicMock(email="ajustador@chubbservicios.com")
++            result = validate_send_qonect(data, sponsor_name="Chubb")
++
++        assert result is True
++
++    @patch("ix.svc.assistanceticket.validate_qonect_questionnaire")
++    @patch("ix.svc.assistanceticket.QONECT_ALLOWED_SERVICE_IDS", {332})
++    def test_manual_assignation_still_blocks_regardless_of_programmed(self, mock_validate_questionnaire):
++        data = _base_data(programmed=1, trigger=True)
++
++        with app.app_context():
++            from flask import g
++            g.current_user = MagicMock(email="ajustador@chubbservicios.com")
++            result = validate_send_qonect(data, sponsor_name="Chubb")
++
++        assert result is False
++        mock_validate_questionnaire.assert_not_called()
+-- 
+2.56.1
+
+
+From e8708dbe2c25cd7868a2f13c6a337fc8b1a5e861 Mon Sep 17 00:00:00 2001
+From: Joshua Morin <joshua.morinsalazar@chubb.com>
+Date: Mon, 27 Jul 2026 17:02:27 -0600
+Subject: [PATCH 08/11] fix(test): correct get_service call-count assertion in
+ appointment strategy test
+
+---
+ apiserver/ix/tests/ahio/test_assign_appointment_service.py | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/apiserver/ix/tests/ahio/test_assign_appointment_service.py b/apiserver/ix/tests/ahio/test_assign_appointment_service.py
+index 1fc3ed1f..2c36fe16 100644
+--- a/apiserver/ix/tests/ahio/test_assign_appointment_service.py
++++ b/apiserver/ix/tests/ahio/test_assign_appointment_service.py
+@@ -53,7 +53,8 @@ class TestAhioAssignAppointmentService:
+             result = strategy.execute()
+ 
+         strategy.api_ahio.assign_appointment_service.assert_called_once_with(879090)
+-        strategy.api_ahio.get_service.assert_called_once_with(879090)
++        strategy.api_ahio.get_service.assert_called_with(879090)
++        assert strategy.api_ahio.get_service.call_count == 2
+         mock_assign_provider.assert_called_once()
+         assert result.success is True
+ 
+-- 
+2.56.1
+
+
+From 4c01f20e701855f6c0627d32c2e8f423a81618df Mon Sep 17 00:00:00 2001
+From: Joshua Morin <joshua.morinsalazar@chubb.com>
+Date: Thu, 30 Jul 2026 09:54:04 -0600
+Subject: [PATCH 09/11] fix(ahio): corregir timezone de fechaHoraCita, agregar
+ logging de fallas silenciosas y eliminar llamado duplicado a get_service
+
+---
+ apiserver/ix/apps/ahio/jobs.py                        | 11 +++++++++--
+ .../ahio/strategies/assign_appointment_service.py     |  8 ++++----
+ apiserver/ix/apps/ahio/strategies/propose_service.py  |  8 +++++---
+ .../ix/tests/ahio/test_assign_appointment_service.py  |  3 +--
+ apiserver/ix/tests/ahio/test_propose_service.py       |  4 ++--
+ 5 files changed, 21 insertions(+), 13 deletions(-)
+
+diff --git a/apiserver/ix/apps/ahio/jobs.py b/apiserver/ix/apps/ahio/jobs.py
+index 3f8dbc72..7c09849e 100644
+--- a/apiserver/ix/apps/ahio/jobs.py
++++ b/apiserver/ix/apps/ahio/jobs.py
+@@ -173,12 +173,19 @@ def _assign_appointment_case(case, api):
+                 provider_site=provider_site,
+                 coverage_id=coverage_id
+             )
++        else:
++            logging.warning(
++                f"Caso {case['case_id']}: AHIO devolvió sap_code {sap_code} pero no se encontró "
++                f"proveedor/sitio/cobertura correspondiente en K2."
++            )
+         return
+ 
+     strategy_cls = AHIOFactory().factory(AhioStrategyCode.AHIO_ASSIGN_APPOINTMENT)
+     last_ticket = get_last_ticket_by_case_id(case_id=case["case_id"])
+     strategy = strategy_cls().set_data({"idServicio": case["ahio_service_id"]}).set_main_ticket(last_ticket).set_case()
+-    strategy.execute()
++    result = strategy.execute()
++    if not result.success:
++        logging.info(f"Caso {case['case_id']}: {result.message}")
+ 
+ 
+ def trigger_appointment_assignments():
+@@ -192,4 +199,4 @@ def trigger_appointment_assignments():
+         try:
+             _assign_appointment_case(case, api)
+         except Exception as e:
+-            logging.error(e)
++            logging.error(f"Caso {case.get('case_id')}: error al procesar asignación de cita: {e}")
+diff --git a/apiserver/ix/apps/ahio/strategies/assign_appointment_service.py b/apiserver/ix/apps/ahio/strategies/assign_appointment_service.py
+index 8068a156..401308b3 100644
+--- a/apiserver/ix/apps/ahio/strategies/assign_appointment_service.py
++++ b/apiserver/ix/apps/ahio/strategies/assign_appointment_service.py
+@@ -12,20 +12,21 @@ class AhioAssignAppointmentService(AHIOStrategyInterface, AHIOProviderAssignment
+         id_servicio = self.data.get("idServicio")
+         return self.api_ahio.assign_appointment_service(id_servicio)
+ 
+-    def __fetch_assigned_sap_code(self):
++    def __fetch_assigned_provider_response(self):
+         id_servicio = self.data.get("idServicio")
+         response = self.api_ahio.get_service(id_servicio)
+-        return (
++        sap_code = (
+             response
+             .get(AhioDefinitions.RESPONSE, {})
+             .get(AhioDefinitions.CRANE, {})
+             .get(AhioDefinitions.SAP_CODE)
+         )
++        return response, sap_code
+ 
+     def execute(self, *args, **kwargs) -> ProviderAssignmentResult:
+         """Dispara la asignación de una cita en AHIO y, si ya hay proveedor, la registra en K2."""
+         self.__trigger_assignment()
+-        sap_code = self.__fetch_assigned_sap_code()
++        ahio_response, sap_code = self.__fetch_assigned_provider_response()
+ 
+         if not sap_code:
+             return ProviderAssignmentResult(
+@@ -40,7 +41,6 @@ class AhioAssignAppointmentService(AHIOStrategyInterface, AHIOProviderAssignment
+                 message=f"No se encontró un proveedor en K2 para caso {self.assistance_case.id}"
+             )
+ 
+-        ahio_response = self.api_ahio.get_service(self.data.get("idServicio"))
+         return assign_provider(
+             case_id=self.assistance_case.id,
+             ahio_response=ahio_response,
+diff --git a/apiserver/ix/apps/ahio/strategies/propose_service.py b/apiserver/ix/apps/ahio/strategies/propose_service.py
+index 440997de..61702793 100644
+--- a/apiserver/ix/apps/ahio/strategies/propose_service.py
++++ b/apiserver/ix/apps/ahio/strategies/propose_service.py
+@@ -1,5 +1,5 @@
+ import logging
+-from datetime import datetime
++from datetime import datetime, timezone
+ 
+ from ix.apps.ahio.builder import AHIOProviderAssignmentBuilder
+ from ix.apps.ahio.strategies.interface import AHIOStrategyInterface
+@@ -9,6 +9,7 @@ from ix.apps.assistance_tickets.factory import AssistanceTicketFactory
+ from ix.apps.assistance_tickets.services import get_last_ticket_by_case_id, get_first_ticket_by_case_id_and_ticket_type
+ from ix.apps.providers.services import assign_provider
+ from ix.apps.providers.types import ProviderAssignmentResult
++from ix.config import config
+ from ix.svc.user import get_user_by_username
+ 
+ logger = logging.getLogger(__name__)
+@@ -25,10 +26,11 @@ class ProposeService(AHIOStrategyInterface, AHIOProviderAssignmentBuilder):
+         if not programdate:
+             return {}
+ 
+-        fecha_hora = datetime.strptime(programdate[:19], "%Y-%m-%dT%H:%M:%S")
++        fecha_hora_utc = datetime.strptime(programdate[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
++        fecha_hora_local = fecha_hora_utc.astimezone(config.K2_TIMEZONE)
+         return {
+             "cita": True,
+-            "fechaHoraCita": fecha_hora.strftime("%d/%m/%Y %H:%M:%S"),
++            "fechaHoraCita": fecha_hora_local.strftime("%d/%m/%Y %H:%M:%S"),
+         }
+ 
+     def __process_data(self):
+diff --git a/apiserver/ix/tests/ahio/test_assign_appointment_service.py b/apiserver/ix/tests/ahio/test_assign_appointment_service.py
+index 2c36fe16..1fc3ed1f 100644
+--- a/apiserver/ix/tests/ahio/test_assign_appointment_service.py
++++ b/apiserver/ix/tests/ahio/test_assign_appointment_service.py
+@@ -53,8 +53,7 @@ class TestAhioAssignAppointmentService:
+             result = strategy.execute()
+ 
+         strategy.api_ahio.assign_appointment_service.assert_called_once_with(879090)
+-        strategy.api_ahio.get_service.assert_called_with(879090)
+-        assert strategy.api_ahio.get_service.call_count == 2
++        strategy.api_ahio.get_service.assert_called_once_with(879090)
+         mock_assign_provider.assert_called_once()
+         assert result.success is True
+ 
+diff --git a/apiserver/ix/tests/ahio/test_propose_service.py b/apiserver/ix/tests/ahio/test_propose_service.py
+index 7a406064..331a188a 100644
+--- a/apiserver/ix/tests/ahio/test_propose_service.py
++++ b/apiserver/ix/tests/ahio/test_propose_service.py
+@@ -24,7 +24,7 @@ class TestProposeServiceCitaFields:
+ 
+         assert result == {
+             "cita": True,
+-            "fechaHoraCita": "14/10/2025 20:00:00",
++            "fechaHoraCita": "14/10/2025 14:00:00",
+         }
+ 
+     def test_build_cita_fields_strips_timezone_suffix_from_programdate(self):
+@@ -38,7 +38,7 @@ class TestProposeServiceCitaFields:
+ 
+         assert result == {
+             "cita": True,
+-            "fechaHoraCita": "14/10/2025 20:00:00",
++            "fechaHoraCita": "14/10/2025 14:00:00",
+         }
+ 
+ 
+-- 
+2.56.1
+
+
+From e83a9cb9cbec1d31af8fb4e2d17ca22f2a5f4742 Mon Sep 17 00:00:00 2001
+From: Joshua Morin <joshua.morinsalazar@chubb.com>
+Date: Thu, 30 Jul 2026 10:22:07 -0600
+Subject: [PATCH 10/11] =?UTF-8?q?feat(ahio):=20agregar=20ventana=20de=20ex?=
+ =?UTF-8?q?piraci=C3=B3n=20de=2024h=20para=20dejar=20de=20reintentar=20cit?=
+ =?UTF-8?q?as=20atoradas?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ apiserver/ix/apps/ahio/jobs.py          | 10 +++++++---
+ apiserver/ix/apps/ahio/queries.py       |  5 +++--
+ apiserver/ix/tests/ahio/test_jobs.py    |  6 ++++++
+ apiserver/ix/tests/ahio/test_queries.py |  9 ++++++++-
+ 4 files changed, 24 insertions(+), 6 deletions(-)
+
+diff --git a/apiserver/ix/apps/ahio/jobs.py b/apiserver/ix/apps/ahio/jobs.py
+index 7c09849e..cba66af0 100644
+--- a/apiserver/ix/apps/ahio/jobs.py
++++ b/apiserver/ix/apps/ahio/jobs.py
+@@ -157,6 +157,7 @@ def _create_ahio_ticket(case, ticket_type, comment, user_id, date_time):
+ 
+ 
+ APPOINTMENT_TRIGGER_WINDOW = timedelta(hours=1.5)
++APPOINTMENT_EXPIRATION_WINDOW = timedelta(hours=24)
+ 
+ 
+ def _assign_appointment_case(case, api):
+@@ -190,11 +191,14 @@ def _assign_appointment_case(case, api):
+ 
+ def trigger_appointment_assignments():
+     """Dispara la asignación de proveedor para citas cuya hora programada ya está
+-    dentro de la ventana de 1.5 horas antes de fechaHoraCita."""
++    dentro de la ventana de 1.5 horas antes de fechaHoraCita, y que no llevan más de
++    24 horas vencidas sin asignarse."""
+     api = AHIOWrapper(config.AHIO_BASE_URL, config.AHIO_AUTH_TOKEN)
+-    window_end = datetime.now(timezone.utc) + APPOINTMENT_TRIGGER_WINDOW
++    now = datetime.now(timezone.utc)
++    window_end = now + APPOINTMENT_TRIGGER_WINDOW
++    window_start = now - APPOINTMENT_EXPIRATION_WINDOW
+ 
+-    pending_cases = get_pending_appointment_cases(window_end=window_end)
++    pending_cases = get_pending_appointment_cases(window_start=window_start, window_end=window_end)
+     for case in pending_cases:
+         try:
+             _assign_appointment_case(case, api)
+diff --git a/apiserver/ix/apps/ahio/queries.py b/apiserver/ix/apps/ahio/queries.py
+index 42200dd0..46f7ee6c 100644
+--- a/apiserver/ix/apps/ahio/queries.py
++++ b/apiserver/ix/apps/ahio/queries.py
+@@ -93,9 +93,9 @@ def get_ahio_service_id(case_id: int):
+ AHIO_CITA_ID_PREFIX = "AHIO_CITA_ID:"
+ 
+ 
+-def get_pending_appointment_cases(window_end: datetime) -> list:
++def get_pending_appointment_cases(window_start: datetime, window_end: datetime) -> list:
+     """Casos con cita registrada en AHIO, aún sin proveedor asignado, cuya hora programada
+-    ya está dentro de la ventana de disparo (datetime del ticket PROGRAMMED <= window_end)."""
++    cae dentro de la ventana de disparo (window_start <= datetime del ticket PROGRAMMED <= window_end)."""
+     assigned_ticket = aliased(AssistanceTicket)
+     programmed_ticket = aliased(AssistanceTicket)
+ 
+@@ -117,6 +117,7 @@ def get_pending_appointment_cases(window_end: datetime) -> list:
+             exists().where(
+                 (programmed_ticket.case_id == AssistanceTicket.case_id)
+                 & (programmed_ticket.ticket_type == AssistanceTicket.PROGRAMMED)
++                & (programmed_ticket.datetime >= window_start)
+                 & (programmed_ticket.datetime <= window_end)
+             ),
+         )
+diff --git a/apiserver/ix/tests/ahio/test_jobs.py b/apiserver/ix/tests/ahio/test_jobs.py
+index 7832c134..ea7fe8ba 100644
+--- a/apiserver/ix/tests/ahio/test_jobs.py
++++ b/apiserver/ix/tests/ahio/test_jobs.py
+@@ -28,6 +28,12 @@ class TestTriggerAppointmentAssignments:
+         mock_assign_provider.assert_called_once()
+         mock_factory.return_value.factory.assert_not_called()
+ 
++        mock_get_pending.assert_called_once()
++        call_kwargs = mock_get_pending.call_args.kwargs
++        assert "window_start" in call_kwargs
++        assert "window_end" in call_kwargs
++        assert call_kwargs["window_start"] < call_kwargs["window_end"]
++
+     @patch("ix.apps.ahio.jobs.assign_provider")
+     @patch("ix.apps.ahio.jobs.AHIOFactory")
+     @patch("ix.apps.ahio.jobs.get_pending_appointment_cases")
+diff --git a/apiserver/ix/tests/ahio/test_queries.py b/apiserver/ix/tests/ahio/test_queries.py
+index 18d09e42..6c504c27 100644
+--- a/apiserver/ix/tests/ahio/test_queries.py
++++ b/apiserver/ix/tests/ahio/test_queries.py
+@@ -1,6 +1,8 @@
+ from datetime import datetime
+ from unittest.mock import MagicMock, patch
+ 
++import pytest
++
+ from ix.app import app
+ from ix.apps.ahio.queries import get_pending_appointment_cases, AHIO_CITA_ID_PREFIX
+ 
+@@ -11,6 +13,7 @@ class TestGetPendingAppointmentCases:
+         assert AHIO_CITA_ID_PREFIX == "AHIO_CITA_ID:"
+ 
+     def test_extracts_case_id_service_id_and_ahio_service_id_from_query_results(self):
++        window_start = datetime(2025, 10, 13, 20, 0, 0)
+         window_end = datetime(2025, 10, 14, 20, 0, 0)
+ 
+         mock_row = (10, 332, "AHIO registró la cita. AHIO_CITA_ID:879090")
+@@ -22,6 +25,10 @@ class TestGetPendingAppointmentCases:
+         with app.app_context():
+             with patch("ix.apps.ahio.queries.g", new_callable=MagicMock) as mock_g:
+                 mock_g.s.return_value.query.return_value = mock_query
+-                result = get_pending_appointment_cases(window_end=window_end)
++                result = get_pending_appointment_cases(window_start=window_start, window_end=window_end)
+ 
+         assert result == [{"case_id": 10, "service_id": 332, "ahio_service_id": "879090"}]
++
++    def test_requires_both_window_bounds(self):
++        with pytest.raises(TypeError):
++            get_pending_appointment_cases(window_end=datetime(2025, 10, 14, 20, 0, 0))
+-- 
+2.56.1
+
+
+From b02cdcf88b93f40c3634af5ab8c1bad0c5da4177 Mon Sep 17 00:00:00 2001
+From: Joshua Morin <joshua.morinsalazar@chubb.com>
+Date: Thu, 30 Jul 2026 12:53:59 -0600
+Subject: [PATCH 11/11] refactor(ahio): replace provider assignment logic with
+ centralized utility function
+
+---
+ apiserver/ix/apps/ahio/jobs.py                | 24 +++---------
+ .../strategies/assign_appointment_service.py  | 39 +++++--------------
+ apiserver/ix/apps/ahio/utils.py               | 34 +++++++++++++++-
+ .../ahio/test_assign_appointment_service.py   |  6 +--
+ apiserver/ix/tests/ahio/test_jobs.py          |  8 ++--
+ 5 files changed, 53 insertions(+), 58 deletions(-)
+
+diff --git a/apiserver/ix/apps/ahio/jobs.py b/apiserver/ix/apps/ahio/jobs.py
+index cba66af0..3af735d7 100644
+--- a/apiserver/ix/apps/ahio/jobs.py
++++ b/apiserver/ix/apps/ahio/jobs.py
+@@ -14,9 +14,8 @@ from ix.apps.ahio.wrapper import AHIOWrapper
+ from ix.apps.ahio.queries import get_open_ahio_cases, get_pending_appointment_cases
+ from ix.apps.ahio.factory import AHIOFactory
+ from ix.apps.ahio.strategies import AhioStrategyCode
+-from ix.apps.ahio.utils import get_provider_coverage_site_by_sap_code
++from ix.apps.ahio.utils import try_assign_provider_from_ahio_response
+ from ix.apps.assistance_tickets.services import get_first_ticket_by_case_id_and_ticket_type, get_last_ticket_by_case_id
+-from ix.apps.providers.services import assign_provider
+ from ix.models.assistanceticket import AssistanceTicket
+ 
+ 
+@@ -162,23 +161,10 @@ APPOINTMENT_EXPIRATION_WINDOW = timedelta(hours=24)
+ 
+ def _assign_appointment_case(case, api):
+     response = api.get_service(case["ahio_service_id"])
+-    sap_code = response.get(AhioDefinitions.RESPONSE, {}).get(AhioDefinitions.CRANE, {}).get(AhioDefinitions.SAP_CODE)
+-
+-    if sap_code:
+-        provider, provider_site, coverage_id = get_provider_coverage_site_by_sap_code(sap_code=sap_code)
+-        if provider and provider_site and coverage_id:
+-            assign_provider(
+-                case_id=case["case_id"],
+-                ahio_response=response,
+-                provider=provider,
+-                provider_site=provider_site,
+-                coverage_id=coverage_id
+-            )
+-        else:
+-            logging.warning(
+-                f"Caso {case['case_id']}: AHIO devolvió sap_code {sap_code} pero no se encontró "
+-                f"proveedor/sitio/cobertura correspondiente en K2."
+-            )
++    result = try_assign_provider_from_ahio_response(case["case_id"], response)
++    if result is not None:
++        if not result.success:
++            logging.warning(f"Caso {case['case_id']}: {result.message}")
+         return
+ 
+     strategy_cls = AHIOFactory().factory(AhioStrategyCode.AHIO_ASSIGN_APPOINTMENT)
+diff --git a/apiserver/ix/apps/ahio/strategies/assign_appointment_service.py b/apiserver/ix/apps/ahio/strategies/assign_appointment_service.py
+index 401308b3..bdbec413 100644
+--- a/apiserver/ix/apps/ahio/strategies/assign_appointment_service.py
++++ b/apiserver/ix/apps/ahio/strategies/assign_appointment_service.py
+@@ -1,8 +1,6 @@
+ from ix.apps.ahio.builder import AHIOProviderAssignmentBuilder
+ from ix.apps.ahio.strategies.interface import AHIOStrategyInterface
+-from ix.apps.ahio.utils import get_provider_coverage_site_by_sap_code
+-from ix.apps.ahio.variables import AhioDefinitions
+-from ix.apps.providers.services import assign_provider
++from ix.apps.ahio.utils import try_assign_provider_from_ahio_response
+ from ix.apps.providers.types import ProviderAssignmentResult
+ 
+ 
+@@ -14,37 +12,18 @@ class AhioAssignAppointmentService(AHIOStrategyInterface, AHIOProviderAssignment
+ 
+     def __fetch_assigned_provider_response(self):
+         id_servicio = self.data.get("idServicio")
+-        response = self.api_ahio.get_service(id_servicio)
+-        sap_code = (
+-            response
+-            .get(AhioDefinitions.RESPONSE, {})
+-            .get(AhioDefinitions.CRANE, {})
+-            .get(AhioDefinitions.SAP_CODE)
+-        )
+-        return response, sap_code
++        return self.api_ahio.get_service(id_servicio)
+ 
+     def execute(self, *args, **kwargs) -> ProviderAssignmentResult:
+         """Dispara la asignación de una cita en AHIO y, si ya hay proveedor, la registra en K2."""
+         self.__trigger_assignment()
+-        ahio_response, sap_code = self.__fetch_assigned_provider_response()
+-
+-        if not sap_code:
+-            return ProviderAssignmentResult(
+-                success=False,
+-                message="AHIO aún no asigna proveedor para la cita"
+-            )
++        ahio_response = self.__fetch_assigned_provider_response()
+ 
+-        provider, provider_site, coverage_id = get_provider_coverage_site_by_sap_code(sap_code=sap_code)
+-        if not (provider and provider_site and coverage_id):
+-            return ProviderAssignmentResult(
+-                success=False,
+-                message=f"No se encontró un proveedor en K2 para caso {self.assistance_case.id}"
+-            )
++        result = try_assign_provider_from_ahio_response(self.assistance_case.id, ahio_response)
++        if result is not None:
++            return result
+ 
+-        return assign_provider(
+-            case_id=self.assistance_case.id,
+-            ahio_response=ahio_response,
+-            provider=provider,
+-            provider_site=provider_site,
+-            coverage_id=coverage_id
++        return ProviderAssignmentResult(
++            success=False,
++            message="AHIO aún no asigna proveedor para la cita"
+         )
+diff --git a/apiserver/ix/apps/ahio/utils.py b/apiserver/ix/apps/ahio/utils.py
+index 7f6f1e1c..2f71e4a5 100644
+--- a/apiserver/ix/apps/ahio/utils.py
++++ b/apiserver/ix/apps/ahio/utils.py
+@@ -1,11 +1,13 @@
+ import logging
++from typing import Optional
+ 
+ from ix.apps.ahio.queries import get_ahio_service_id
+-from ix.apps.ahio.variables import AhioMessages
++from ix.apps.ahio.variables import AhioDefinitions, AhioMessages
+ from ix.apps.ahio.wrapper import AHIOWrapper
+ from ix.apps.assistance_assignment_status.services import add_assigment_status
+ from ix.apps.assistance_provider_coverage.services import get_coverage_id_by_provider_site_id
+-from ix.apps.providers.services import get_provider_by_sap_code
++from ix.apps.providers.services import assign_provider, get_provider_by_sap_code
++from ix.apps.providers.types import ProviderAssignmentResult
+ from ix.apps.provider_site.services import get_provider_site_by_provider_id
+ 
+ from ix.config import config
+@@ -33,3 +35,31 @@ def get_provider_coverage_site_by_sap_code(sap_code: str):
+     provider_site = get_provider_site_by_provider_id(provider_id=provider.id) if provider else None
+     coverage_id = get_coverage_id_by_provider_site_id(provider_site_id=provider_site.id) if provider_site else None
+     return provider, provider_site, coverage_id
++
++
++def try_assign_provider_from_ahio_response(case_id: int, response: dict) -> Optional[ProviderAssignmentResult]:
++    """Si la respuesta de AHIO ya trae sap_code, resuelve el proveedor en K2 y asigna.
++    Devuelve None si AHIO aún no tiene sap_code, para que el caller decida el siguiente paso."""
++    sap_code = (
++        response
++        .get(AhioDefinitions.RESPONSE, {})
++        .get(AhioDefinitions.CRANE, {})
++        .get(AhioDefinitions.SAP_CODE)
++    )
++    if not sap_code:
++        return None
++
++    provider, provider_site, coverage_id = get_provider_coverage_site_by_sap_code(sap_code=sap_code)
++    if not (provider and provider_site and coverage_id):
++        return ProviderAssignmentResult(
++            success=False,
++            message=f"No se encontró un proveedor en K2 para caso {case_id}"
++        )
++
++    return assign_provider(
++        case_id=case_id,
++        ahio_response=response,
++        provider=provider,
++        provider_site=provider_site,
++        coverage_id=coverage_id
++    )
+diff --git a/apiserver/ix/tests/ahio/test_assign_appointment_service.py b/apiserver/ix/tests/ahio/test_assign_appointment_service.py
+index 1fc3ed1f..1fcf1d6b 100644
+--- a/apiserver/ix/tests/ahio/test_assign_appointment_service.py
++++ b/apiserver/ix/tests/ahio/test_assign_appointment_service.py
+@@ -43,9 +43,9 @@ class TestAhioAssignAppointmentService:
+         }
+ 
+         with patch(
+-            "ix.apps.ahio.strategies.assign_appointment_service.get_provider_coverage_site_by_sap_code"
++            "ix.apps.ahio.utils.get_provider_coverage_site_by_sap_code"
+         ) as mock_get_coverage, patch(
+-            "ix.apps.ahio.strategies.assign_appointment_service.assign_provider"
++            "ix.apps.ahio.utils.assign_provider"
+         ) as mock_assign_provider:
+             mock_get_coverage.return_value = (MagicMock(), MagicMock(), 7)
+             mock_assign_provider.return_value = ProviderAssignmentResult(success=True, message="ok")
+@@ -70,7 +70,7 @@ class TestAhioAssignAppointmentService:
+         }
+ 
+         with patch(
+-            "ix.apps.ahio.strategies.assign_appointment_service.assign_provider"
++            "ix.apps.ahio.utils.assign_provider"
+         ) as mock_assign_provider:
+             result = strategy.execute()
+ 
+diff --git a/apiserver/ix/tests/ahio/test_jobs.py b/apiserver/ix/tests/ahio/test_jobs.py
+index ea7fe8ba..1e3cc4a1 100644
+--- a/apiserver/ix/tests/ahio/test_jobs.py
++++ b/apiserver/ix/tests/ahio/test_jobs.py
+@@ -5,7 +5,7 @@ from ix.apps.ahio.jobs import trigger_appointment_assignments
+ 
+ class TestTriggerAppointmentAssignments:
+ 
+-    @patch("ix.apps.ahio.jobs.assign_provider")
++    @patch("ix.apps.ahio.utils.assign_provider")
+     @patch("ix.apps.ahio.jobs.AHIOFactory")
+     @patch("ix.apps.ahio.jobs.get_pending_appointment_cases")
+     def test_assigns_directly_when_already_has_sap_code(
+@@ -20,7 +20,7 @@ class TestTriggerAppointmentAssignments:
+         }
+ 
+         with patch("ix.apps.ahio.jobs.AHIOWrapper", return_value=api), \
+-             patch("ix.apps.ahio.jobs.get_provider_coverage_site_by_sap_code") as mock_coverage:
++             patch("ix.apps.ahio.utils.get_provider_coverage_site_by_sap_code") as mock_coverage:
+             mock_coverage.return_value = (MagicMock(), MagicMock(), 7)
+ 
+             trigger_appointment_assignments()
+@@ -34,7 +34,7 @@ class TestTriggerAppointmentAssignments:
+         assert "window_end" in call_kwargs
+         assert call_kwargs["window_start"] < call_kwargs["window_end"]
+ 
+-    @patch("ix.apps.ahio.jobs.assign_provider")
++    @patch("ix.apps.ahio.utils.assign_provider")
+     @patch("ix.apps.ahio.jobs.AHIOFactory")
+     @patch("ix.apps.ahio.jobs.get_pending_appointment_cases")
+     def test_triggers_appointment_strategy_when_no_sap_code_yet(
+@@ -59,7 +59,7 @@ class TestTriggerAppointmentAssignments:
+         )
+         strategy_cls.return_value.set_data.return_value.set_main_ticket.return_value.set_case.return_value.execute.assert_called_once()
+ 
+-    @patch("ix.apps.ahio.jobs.assign_provider")
++    @patch("ix.apps.ahio.utils.assign_provider")
+     @patch("ix.apps.ahio.jobs.AHIOFactory")
+     @patch("ix.apps.ahio.jobs.get_pending_appointment_cases")
+     def test_one_failing_case_does_not_stop_the_rest(
+-- 
+2.56.1
+
