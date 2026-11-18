@@ -1,0 +1,128 @@
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/notifications_manager.py b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/notifications_manager.py
+index 30e4ceac..47decc7c 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/notifications_manager.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/notifications_manager.py
+@@ -80,11 +80,14 @@ class AutoRelevoNotificationsService:
+             if not data["correo_electronico"]:
+                 logging.warning("[autorelevo] Servicio %s sin correo para aviso de documentación aprobada", servicio_id)
+                 return
++            template_path = os.path.join(os.path.dirname(__file__), "../template/autorelevo_documentacion_aprobada.html")
++            with open(template_path, "r", encoding="utf-8") as file:
++                email_template = file.read()
+             body = render_template_string(
+-                "<p>Hola {{ nombre }},</p>"
+-                "<p>Tu documentación de Auto Relevo fue revisada y <b>aprobada</b>. "
+-                "Solo falta la autorización de tu solicitud; te avisaremos por este medio.</p>",
+-                nombre=data["nombre_completo"] or "",
++                email_template,
++                nombre_cliente=data["nombre_completo"] or "",
++                numero_siniestro=data["numero_siniestro"],
++                poliza=data["poliza"],
+             )
+             send_email(
+                 recipients=data["correo_electronico"],
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/template/autorelevo_documentacion_aprobada.html b/apiserver/ix/boletas_informativas/auto_relevo/api/template/autorelevo_documentacion_aprobada.html
+new file mode 100644
+index 00000000..dd377bce
+--- /dev/null
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/template/autorelevo_documentacion_aprobada.html
+@@ -0,0 +1,99 @@
++<!DOCTYPE html>
++<html lang="es">
++    <head>
++        <title>AUTO RELEVO - Documentación aprobada</title>
++        <meta charset="UTF-8" />
++        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
++        <style>
++            @import url("https://fonts.googleapis.com/css2?family=Lato:wght@400;700&display=swap");
++
++            body {
++                font-family: "Lato", Arial, sans-serif;
++                margin: 0;
++                padding: 0;
++                background-color: #f9f9f9;
++                color: #333;
++            }
++
++            .header-title {
++                font-size: 32px;
++                font-weight: 700;
++                line-height: 1.2;
++                text-align: left;
++                padding: 20px 40px;
++                background-color: #ecb432;
++                color: white;
++            }
++
++            .alert-msg {
++                font-size: 14px;
++                line-height: 1.2;
++                text-align: left;
++                padding: 20px 40px;
++                background-color: #ececec;
++                color: black;
++            }
++
++            .content-wrapper {
++                padding: 20px 40px;
++                background-color: white;
++                margin: 20px;
++                border-radius: 8px;
++                box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
++            }
++
++            .info {
++                font-size: 18px;
++                font-weight: 400;
++                line-height: 1.5;
++                margin-bottom: 20px;
++            }
++
++            .important {
++                font-weight: 700;
++                color: #7acb00;
++            }
++
++            .semi-footer {
++                font-size: 16px;
++                font-weight: 400;
++                line-height: 24px;
++                text-align: left;
++                margin-top: 20px;
++            }
++        </style>
++    </head>
++    <body>
++        <div class="header-title">
++            <h1>
++                AUTO RELEVO - DOCUMENTACIÓN APROBADA
++                {% if numero_siniestro %}
++                    Siniestro {{ numero_siniestro }}
++                {% elif poliza %}
++                    Póliza {{ poliza }}
++                {% endif %}
++            </h1>
++        </div>
++        <div class="content-wrapper">
++            <p class="info">Buen día</p>
++
++            <p class="info">Estimado (a): {{ nombre_cliente }}</p>
++            <p class="info">
++                Le informamos que su documentación fue revisada y
++                <span class="important">aprobada</span>.
++            </p>
++            <p class="info">
++                Su solicitud se encuentra en espera de autorización. Le notificaremos por este medio en cuanto
++                tengamos una respuesta para continuar con la asignación de su vehículo de auto relevo.
++            </p>
++            <p class="semi-footer">
++                En caso de que necesite conocer el estatus de su servicio, puede comunicarse a nuestros teléfonos y
++                uno de nuestros asesores se encargará de resolver cualquier duda o aclaración.
++            </p>
++            <p class="semi-footer">Saludos.</p>
++        </div>
++        <div class="alert-msg">
++            <p> ¡Alerta de fraude! En Chubb nunca te pediremos depósitos en cuentas que no estén a nuestro nombre ni enviaremos correos desde dominios distintos a nuestros oficiales: @chubb.com y @chubbservicios.com. Chubb no se hace responsable por operaciones realizadas fuera de estos canales.</p>
++        </div>
++    </body>
++</html>
