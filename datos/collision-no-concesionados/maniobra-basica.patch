@@ -1,0 +1,200 @@
+diff --git a/apiserver/ix/apps/ahio/enums.py b/apiserver/ix/apps/ahio/enums.py
+index 0bbb4ead..72682b8c 100644
+--- a/apiserver/ix/apps/ahio/enums.py
++++ b/apiserver/ix/apps/ahio/enums.py
+@@ -1,8 +1 @@
+-from enum import Enum
+-
+-
+-class ManeuverType(str, Enum):
+-    """Valores del combo 'Tipo de maniobra' en el cuestionario de colisión."""
+-
+-    BASIC = "Maniobra básica"
+-    SPECIAL = "Maniobra Especial"
++from ix.enums.maneuver_type import ManeuverType as ManeuverType
+diff --git a/apiserver/ix/tests/whatsApp/test_collision.py b/apiserver/ix/tests/whatsApp/test_collision.py
+index bdc6b493..99cf16f6 100644
+--- a/apiserver/ix/tests/whatsApp/test_collision.py
++++ b/apiserver/ix/tests/whatsApp/test_collision.py
+@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
+ from flask import g
+ from ix.app import app
+ from ix.enums.catalog_equivalence import AdditionalServiceEnum
++from ix.enums.maneuver_type import ManeuverType
+ from ix.tests.tools.decorators import with_db_session
+ from ix.whatsApp.services.collision import (
+     get_providers_by_location,
+@@ -761,6 +762,40 @@ def _trigger_test_data(provider_type, extra_services=None):
+ 
+ class TestCollisionTriggerAhioAssignment:
+ 
++    @pytest.mark.parametrize(
++        "provider_type, extra_services, expected_trigger",
++        [
++            pytest.param(
++                "No Concesionado",
++                [{"value1": AdditionalServiceEnum.MANEUVER.value,
++                  "value2": ManeuverType.BASIC.value}],
++                False,
++                id="maniobra-basica",
++            ),
++            pytest.param(
++                "No Concesionado",
++                [{"value1": AdditionalServiceEnum.MANEUVER.value,
++                  "value2": ManeuverType.SPECIAL.value}],
++                True,
++                id="maniobra-especial",
++            ),
++            pytest.param(
++                "No Concesionado",
++                [{"value1": AdditionalServiceEnum.MANEUVER.value}],
++                False,
++                id="maniobra-sin-subtipo",
++            ),
++            pytest.param(
++                "No Concesionado",
++                [{"value1": AdditionalServiceEnum.PENSION.value,
++                  "value2": ManeuverType.SPECIAL.value}],
++                False,
++                id="otro-servicio-no-es-maniobra",
++            ),
++            pytest.param("No Concesionado", [], False, id="sin-maniobra"),
++            pytest.param("Concesionado", [], True, id="cds"),
++        ],
++    )
+     @patch("ix.whatsApp.services.collision.ApiValidator")
+     @patch("ix.whatsApp.services.collision.wa_get_service_collision")
+     @patch("ix.whatsApp.services.collision.wa_get_create_sinister")
+@@ -769,10 +804,11 @@ class TestCollisionTriggerAhioAssignment:
+     @patch("ix.whatsApp.services.collision.wa_create_edit_member")
+     @patch("ix.whatsApp.services.collision.wa_get_create_sale_by_assistance_case_data")
+     @patch("ix.whatsApp.services.collision.create_initial_case_ticket")
+-    def test_no_concesionada_with_maneuver_does_not_force_manual_trigger(
++    def test_ticket_only_forces_manual_assignment_for_cds_or_special_maneuver(
+         self,
+         mock_create_ticket, mock_sale, mock_member, mock_plan,
+         mock_vehicle, mock_sinister, mock_service, mock_validator,
++        provider_type, extra_services, expected_trigger,
+     ):
+         mock_validator.return_value = MagicMock(errors=None)
+         mock_service.return_value = MagicMock(id=391)
+@@ -783,47 +819,14 @@ class TestCollisionTriggerAhioAssignment:
+         mock_sale.return_value = MagicMock(id=1)
+         mock_create_ticket.return_value = (FOLIO_MOCK,)
+ 
+-        data = _trigger_test_data(
+-            provider_type="No Concesionado",
+-            extra_services=[{"value1": AdditionalServiceEnum.MANEUVER.value}],
+-        )
+-
+-        with app.app_context():
+-            g.current_user = MagicMock(id=1)
+-            g.s = MagicMock(return_value=MagicMock())
+-            create_assistance_case(data)
+-
+-        _, called_ticket = mock_create_ticket.call_args[0]
+-        assert called_ticket["trigger"] is False
+-
+-    @patch("ix.whatsApp.services.collision.ApiValidator")
+-    @patch("ix.whatsApp.services.collision.wa_get_service_collision")
+-    @patch("ix.whatsApp.services.collision.wa_get_create_sinister")
+-    @patch("ix.whatsApp.services.collision.wa_create_edit_sinister_vehicle")
+-    @patch("ix.whatsApp.services.collision.get_plan_policy_by_assistance_case_data")
+-    @patch("ix.whatsApp.services.collision.wa_create_edit_member")
+-    @patch("ix.whatsApp.services.collision.wa_get_create_sale_by_assistance_case_data")
+-    @patch("ix.whatsApp.services.collision.create_initial_case_ticket")
+-    def test_concesionada_still_forces_manual_trigger(
+-        self,
+-        mock_create_ticket, mock_sale, mock_member, mock_plan,
+-        mock_vehicle, mock_sinister, mock_service, mock_validator,
+-    ):
+-        mock_validator.return_value = MagicMock(errors=None)
+-        mock_service.return_value = MagicMock(id=391)
+-        mock_sinister.return_value = MagicMock(id=1)
+-        mock_vehicle.return_value = MagicMock(id=1)
+-        mock_plan.return_value = _plan_mock()
+-        mock_member.return_value = _member_mock()
+-        mock_sale.return_value = MagicMock(id=1)
+-        mock_create_ticket.return_value = (FOLIO_MOCK,)
+-
+-        data = _trigger_test_data(provider_type="Concesionado")
++        data = _trigger_test_data(provider_type, extra_services)
+ 
+         with app.app_context():
+             g.current_user = MagicMock(id=1)
+-            g.s = MagicMock(return_value=MagicMock())
++            session = MagicMock()
++            session.query.return_value.filter.return_value.first.return_value = None
++            g.s = MagicMock(return_value=session)
+             create_assistance_case(data)
+ 
+         _, called_ticket = mock_create_ticket.call_args[0]
+-        assert called_ticket["trigger"] is True
+\ No newline at end of file
++        assert called_ticket["trigger"] is expected_trigger
+diff --git a/apiserver/ix/whatsApp/services/collision.py b/apiserver/ix/whatsApp/services/collision.py
+index 39aeac89..7b808d4e 100644
+--- a/apiserver/ix/whatsApp/services/collision.py
++++ b/apiserver/ix/whatsApp/services/collision.py
+@@ -20,7 +20,8 @@ from ix.svc.assistanceticket import create_new_assistance_ticket
+ from ix.enums.member import ChubbPolicyStatusEnum
+ from ix.enums.assistance import AssistanceTypeSearchEnum
+ from ix.enums.assistance_service import AssistanceTypeServiceEnum
+-from ix.enums.catalog_equivalence import AdditionalServiceEnum #QUITAR EN CAMBIOS NUEVOS DE CONCESIONADO
++from ix.enums.catalog_equivalence import AdditionalServiceEnum
++from ix.enums.maneuver_type import ManeuverType
+ from ix.tools.definitions.catalog_equivalence import (
+     CHUBB_DESTINATION_PLACE_TYPE_ROOT,
+     CHUBB_PLACE_TYPE_NOT_FOUND,
+@@ -323,6 +324,15 @@ def wa_create_ticket_provider_assignment(
+     
+     create_new_assistance_ticket(data_provider)
+ 
++
++def _has_special_maneuver(extra_services: List[dict]) -> bool:
++    return any(
++        service.get("value1") == AdditionalServiceEnum.MANEUVER.value
++        and service.get("value2") == ManeuverType.SPECIAL.value
++        for service in extra_services
++    )
++
++
+ def create_assistance_case(data) -> models.AssistanceCase:
+         
+     validator = ApiValidator(collision_schema, purge_unknown=False)
+@@ -342,13 +352,6 @@ def create_assistance_case(data) -> models.AssistanceCase:
+             "No se encontró el servicio de Gruas de Colisión activo."
+         )
+     
+-    requiere_maniobra = (
+-        len(data.get("extra_services", [])) > 0
+-        and any(
+-            extra_service["value1"] == AdditionalServiceEnum.MANEUVER.value
+-            for extra_service in data["extra_services"]
+-        )
+-    )   # QUITAR EN NUEVOS CAMBIOS DE CONCESIONADO
+     data["cdsservice"] = data["provider_type"].lower() == "concesionado" 
+     data["date_arrival_no_cds"] = datetime.now(timezone.utc).isoformat()
+     
+@@ -392,11 +395,9 @@ def create_assistance_case(data) -> models.AssistanceCase:
+     ticket = data["ticket"]
+     ticket["service_id"] = service.id
+     ticket["comment"] = tiket_comment
+-    # Concesionada sigue siendo asignación manual. No Concesionada ya no se
+-    # fuerza a manual por maniobra: AHIO también resuelve maniobra.
+-    
+-    # QUITAR 'requiere_maniobra' PARA NUEVOS CAMBIOS DE CONCESIONADO
+-    ticket["trigger"] = requiere_maniobra or data["cdsservice"]
++    ticket["trigger"] = data["cdsservice"] or _has_special_maneuver(
++        data.get("extra_services", [])
++    )
+     
+     create_assistance_case_data = data
+     create_assistance_case_data["member"] =  data_member
+@@ -656,4 +657,4 @@ def apply_concesionada_provider_data_from_wa(data_wa: dict, payload_data: dict)
+             f"{current_comment} {provider_comment}".strip()
+             if current_comment
+             else provider_comment
+-        )
+\ No newline at end of file
++        )
