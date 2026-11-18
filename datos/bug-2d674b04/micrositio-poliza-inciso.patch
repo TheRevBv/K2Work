@@ -68,18 +68,17 @@ index 30a702f..823bd6e 100644
      const motivo       = this.motivo()!;
  
 diff --git a/autorelevo/src/app/features/solicitud/num-siniestro/num-siniestro.component.ts b/autorelevo/src/app/features/solicitud/num-siniestro/num-siniestro.component.ts
-index 77777f1..58da72d 100644
+index 76ac23a..8fe1e3a 100644
 --- a/autorelevo/src/app/features/solicitud/num-siniestro/num-siniestro.component.ts
 +++ b/autorelevo/src/app/features/solicitud/num-siniestro/num-siniestro.component.ts
-@@ -273,7 +273,7 @@ export class NumSiniestroComponent {
+@@ -254,7 +254,7 @@ export class NumSiniestroComponent {
      this.loading.set(true);
      const numSiniestro = this.form.value.numSiniestro!.trim();
      const sess         = this.auth.session()!;
 -    const poliza       = `${polizaK2(sess.numPoliza)}|${sess.inciso}`;
 +    const poliza       = polizaK2(sess.numPoliza, sess.inciso);
  
-     if (this.solicitudSvc.enConsulta()) {
-       this.consultarFolio(numSiniestro, polizaK2(sess.numPoliza));
+     this.k2Svc.validateSiniestro(numSiniestro, poliza).subscribe({
+       next: () => {
 -- 
-2.56.1
-
+2.x
