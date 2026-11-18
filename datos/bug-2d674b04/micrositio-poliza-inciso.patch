@@ -1,4 +1,4 @@
-From cec8411845a3bb84cb88d6d3f7040908e757c3e1 Mon Sep 17 00:00:00 2001
+From c49927aae78e20cc3ba8cb96bfbc821e66132a7c Mon Sep 17 00:00:00 2001
 From: JoshMorinDev <joshua.morinsalazar@chubb.com>
 Date: Wed, 18 Nov 2026 11:43:47 -0600
 Subject: [PATCH] =?UTF-8?q?fix(autorelevo):=20enviar=20el=20inciso=20de=20?=
@@ -8,11 +8,54 @@ Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
 ---
- .../features/solicitud/captura-info/captura-info.component.ts   | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
+ autorelevo/src/app/core/utils/poliza.spec.ts         | 12 ++++++++++++
+ autorelevo/src/app/core/utils/poliza.ts              | 11 ++++++++---
+ .../solicitud/captura-info/captura-info.component.ts |  2 +-
+ .../num-siniestro/num-siniestro.component.ts         |  2 +-
+ 4 files changed, 22 insertions(+), 5 deletions(-)
+ create mode 100644 autorelevo/src/app/core/utils/poliza.spec.ts
 
+diff --git a/autorelevo/src/app/core/utils/poliza.spec.ts b/autorelevo/src/app/core/utils/poliza.spec.ts
+new file mode 100644
+index 0000000..ba9552c
+--- /dev/null
++++ b/autorelevo/src/app/core/utils/poliza.spec.ts
+@@ -0,0 +1,12 @@
++import { polizaK2 } from './poliza';
++
++describe('polizaK2', () => {
++  it('arma PREFIJO|NUMERO sin inciso', () => {
++    expect(polizaK2('q2-500.27051')).toBe('Q2|50027051');
++    expect(polizaK2('Q250027051', '  ')).toBe('Q2|50027051');
++  });
++
++  it('agrega el inciso cuando se indica', () => {
++    expect(polizaK2('Q250027051', ' 1 ')).toBe('Q2|50027051|1');
++  });
++});
+diff --git a/autorelevo/src/app/core/utils/poliza.ts b/autorelevo/src/app/core/utils/poliza.ts
+index ed255bb..7aedad0 100644
+--- a/autorelevo/src/app/core/utils/poliza.ts
++++ b/autorelevo/src/app/core/utils/poliza.ts
+@@ -2,8 +2,13 @@
+ export const normalizarPoliza = (valor?: string | null): string =>
+   (valor ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+ 
+-/** Póliza en el formato que espera K2: PREFIJO|NUMERO (los dos primeros caracteres son el prefijo). */
+-export const polizaK2 = (valor?: string | null): string => {
++/**
++ * Póliza en el formato que espera K2: PREFIJO|NUMERO, o PREFIJO|NUMERO|INCISO si se indica el inciso
++ * (los dos primeros caracteres son el prefijo).
++ */
++export const polizaK2 = (valor?: string | null, inciso?: string | null): string => {
+   const limpia = normalizarPoliza(valor);
+-  return `${limpia.slice(0, 2)}|${limpia.slice(2)}`;
++  const base = `${limpia.slice(0, 2)}|${limpia.slice(2)}`;
++  const numInciso = (inciso ?? '').trim();
++  return numInciso ? `${base}|${numInciso}` : base;
+ };
 diff --git a/autorelevo/src/app/features/solicitud/captura-info/captura-info.component.ts b/autorelevo/src/app/features/solicitud/captura-info/captura-info.component.ts
-index 30a702f..143a26e 100644
+index 30a702f..823bd6e 100644
 --- a/autorelevo/src/app/features/solicitud/captura-info/captura-info.component.ts
 +++ b/autorelevo/src/app/features/solicitud/captura-info/captura-info.component.ts
 @@ -410,7 +410,7 @@ export class CapturaInfoComponent implements OnInit {
@@ -20,10 +63,23 @@ index 30a702f..143a26e 100644
      const numSiniestro = this.solicitudSvc.numSiniestro() || null;
      const sess         = this.session()!;
 -    const poliza       = polizaK2(sess.numPoliza);
-+    const poliza       = `${polizaK2(sess.numPoliza)}|${sess.inciso}`;
++    const poliza       = polizaK2(sess.numPoliza, sess.inciso);
      const email        = v.email!;
      const motivo       = this.motivo()!;
  
+diff --git a/autorelevo/src/app/features/solicitud/num-siniestro/num-siniestro.component.ts b/autorelevo/src/app/features/solicitud/num-siniestro/num-siniestro.component.ts
+index 77777f1..58da72d 100644
+--- a/autorelevo/src/app/features/solicitud/num-siniestro/num-siniestro.component.ts
++++ b/autorelevo/src/app/features/solicitud/num-siniestro/num-siniestro.component.ts
+@@ -273,7 +273,7 @@ export class NumSiniestroComponent {
+     this.loading.set(true);
+     const numSiniestro = this.form.value.numSiniestro!.trim();
+     const sess         = this.auth.session()!;
+-    const poliza       = `${polizaK2(sess.numPoliza)}|${sess.inciso}`;
++    const poliza       = polizaK2(sess.numPoliza, sess.inciso);
+ 
+     if (this.solicitudSvc.enConsulta()) {
+       this.consultarFolio(numSiniestro, polizaK2(sess.numPoliza));
 -- 
 2.56.1
 
