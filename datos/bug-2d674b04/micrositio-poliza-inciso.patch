@@ -1,0 +1,29 @@
+From cec8411845a3bb84cb88d6d3f7040908e757c3e1 Mon Sep 17 00:00:00 2001
+From: JoshMorinDev <joshua.morinsalazar@chubb.com>
+Date: Wed, 18 Nov 2026 11:43:47 -0600
+Subject: [PATCH] =?UTF-8?q?fix(autorelevo):=20enviar=20el=20inciso=20de=20?=
+ =?UTF-8?q?la=20p=C3=B3liza=20al=20crear=20ticket=20sin=20siniestro?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ .../features/solicitud/captura-info/captura-info.component.ts   | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/autorelevo/src/app/features/solicitud/captura-info/captura-info.component.ts b/autorelevo/src/app/features/solicitud/captura-info/captura-info.component.ts
+index 30a702f..143a26e 100644
+--- a/autorelevo/src/app/features/solicitud/captura-info/captura-info.component.ts
++++ b/autorelevo/src/app/features/solicitud/captura-info/captura-info.component.ts
+@@ -410,7 +410,7 @@ export class CapturaInfoComponent implements OnInit {
+     const v            = this.form.value;
+     const numSiniestro = this.solicitudSvc.numSiniestro() || null;
+     const sess         = this.session()!;
+-    const poliza       = polizaK2(sess.numPoliza);
++    const poliza       = `${polizaK2(sess.numPoliza)}|${sess.inciso}`;
+     const email        = v.email!;
+     const motivo       = this.motivo()!;
+ 
+-- 
+2.56.1
+
