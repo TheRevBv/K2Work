@@ -1,0 +1,224 @@
+From 4334193d2ef6e23d669a3176426e042410027bd0 Mon Sep 17 00:00:00 2001
+From: JoshMorinDev <joshua.morinsalazar@chubb.com>
+Date: Wed, 18 Nov 2026 11:34:47 -0600
+Subject: [PATCH 1/2] =?UTF-8?q?fix(autorelevo):=20notificar=20al=20asegura?=
+ =?UTF-8?q?do=20cuando=20se=20aprueba=20su=20documentaci=C3=B3n?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ .../auto_relevo_boleta_service.py             |  3 +
+ .../notifications_manager.py                  | 25 +++++
+ .../autorelevo_documentacion_aprobada.html    | 99 +++++++++++++++++++
+ .../test_aviso_documentacion_aprobada.py      | 35 +++++++
+ 4 files changed, 162 insertions(+)
+ create mode 100644 apiserver/ix/boletas_informativas/auto_relevo/api/template/autorelevo_documentacion_aprobada.html
+ create mode 100644 apiserver/ix/tests/auto_relevo/test_aviso_documentacion_aprobada.py
+
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
+index d0ef782c..e12b408c 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
+@@ -13,6 +13,7 @@ from ix.boletas_informativas.auto_relevo.api.auto_relevo_boleta.auto_relevo_bole
+ from ix.boletas_informativas.models.documents_model import DocumentoValidacion, TipoServicioBoleta,MotivoServicio, DocumentoRequerido
+ from ix.boletas_informativas.auto_relevo.api.auto_relevo_boleta.auto_relevo_data_manager import AutoRelevoDataManager
+ from ix.boletas_informativas.auto_relevo.api.auto_relevo_boleta.auto_relevo_events_manager import AutoRelevoEventsManager, parse_chubb_date
++from ix.boletas_informativas.auto_relevo.api.auto_relevo_boleta.notifications_manager import AutoRelevoNotificationsService
+ import MySQLdb
+ import requests
+ import logging
+@@ -1222,6 +1223,8 @@ class AutoRelevoService:
+             servicio = data_manager.update_status_servicio_auto_relevo(ticket_id, nuevo.value, usuario_id)
+             self._sync_event_status(servicio)
+         g.s().commit()
++        if actual != nuevo.value and nuevo == EstatusServicioEnum.DOCUMENTACION_COMPLETA:
++            AutoRelevoNotificationsService.envio_mail_documentacion_aprobada(ticket_id)
+ 
+     def registrar_autorizacion(self, ticket_id, payload):
+         """Registra el resultado de la autorización (aprobado / no aprobado) de un servicio.
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/notifications_manager.py b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/notifications_manager.py
+index 1348e987..47decc7c 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/notifications_manager.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/notifications_manager.py
+@@ -72,6 +72,31 @@ class AutoRelevoNotificationsService:
+         """
+         return f"{url}public/auto-relevo-upload-files/{hash_id}"
+ 
++    @staticmethod
++    def envio_mail_documentacion_aprobada(servicio_id):
++        """Avisa al titular que su documentación fue aprobada; un fallo de envío solo se registra."""
++        try:
++            data = AutoRelevoNotificationsService.get_servicio_data(servicio_id)
++            if not data["correo_electronico"]:
++                logging.warning("[autorelevo] Servicio %s sin correo para aviso de documentación aprobada", servicio_id)
++                return
++            template_path = os.path.join(os.path.dirname(__file__), "../template/autorelevo_documentacion_aprobada.html")
++            with open(template_path, "r", encoding="utf-8") as file:
++                email_template = file.read()
++            body = render_template_string(
++                email_template,
++                nombre_cliente=data["nombre_completo"] or "",
++                numero_siniestro=data["numero_siniestro"],
++                poliza=data["poliza"],
++            )
++            send_email(
++                recipients=data["correo_electronico"],
++                subject="AUTO RELEVO - Documentación aprobada",
++                body=body,
++            )
++        except Exception:
++            logging.exception("[autorelevo] Error enviando aviso de documentación aprobada servicio_id=%s", servicio_id)
++
+     @staticmethod
+     def envio_mail(servicio_id,url,data_mail,email=None):
+         """
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/template/autorelevo_documentacion_aprobada.html b/apiserver/ix/boletas_informativas/auto_relevo/api/template/autorelevo_documentacion_aprobada.html
+new file mode 100644
+index 00000000..dd377bce
+--- /dev/null
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/template/autorelevo_documentacion_aprobada.html
+@@ -0,0 +1,99 @@
++<!DOCTYPE html>
++<html lang="es">
++    <head>
++        <title>AUTO RELEVO - Documentación aprobada</title>
++        <meta charset="UTF-8" />
++        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
++        <style>
++            @import url("https://fonts.googleapis.com/css2?family=Lato:wght@400;700&display=swap");
++
++            body {
++                font-family: "Lato", Arial, sans-serif;
++                margin: 0;
++                padding: 0;
++                background-color: #f9f9f9;
++                color: #333;
++            }
++
++            .header-title {
++                font-size: 32px;
++                font-weight: 700;
++                line-height: 1.2;
++                text-align: left;
++                padding: 20px 40px;
++                background-color: #ecb432;
++                color: white;
++            }
++
++            .alert-msg {
++                font-size: 14px;
++                line-height: 1.2;
++                text-align: left;
++                padding: 20px 40px;
++                background-color: #ececec;
++                color: black;
++            }
++
++            .content-wrapper {
++                padding: 20px 40px;
++                background-color: white;
++                margin: 20px;
++                border-radius: 8px;
++                box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
++            }
++
++            .info {
++                font-size: 18px;
++                font-weight: 400;
++                line-height: 1.5;
++                margin-bottom: 20px;
++            }
++
++            .important {
++                font-weight: 700;
++                color: #7acb00;
++            }
++
++            .semi-footer {
++                font-size: 16px;
++                font-weight: 400;
++                line-height: 24px;
++                text-align: left;
++                margin-top: 20px;
++            }
++        </style>
++    </head>
++    <body>
++        <div class="header-title">
++            <h1>
++                AUTO RELEVO - DOCUMENTACIÓN APROBADA
++                {% if numero_siniestro %}
++                    Siniestro {{ numero_siniestro }}
++                {% elif poliza %}
++                    Póliza {{ poliza }}
++                {% endif %}
++            </h1>
++        </div>
++        <div class="content-wrapper">
++            <p class="info">Buen día</p>
++
++            <p class="info">Estimado (a): {{ nombre_cliente }}</p>
++            <p class="info">
++                Le informamos que su documentación fue revisada y
++                <span class="important">aprobada</span>.
++            </p>
++            <p class="info">
++                Su solicitud se encuentra en espera de autorización. Le notificaremos por este medio en cuanto
++                tengamos una respuesta para continuar con la asignación de su vehículo de auto relevo.
++            </p>
++            <p class="semi-footer">
++                En caso de que necesite conocer el estatus de su servicio, puede comunicarse a nuestros teléfonos y
++                uno de nuestros asesores se encargará de resolver cualquier duda o aclaración.
++            </p>
++            <p class="semi-footer">Saludos.</p>
++        </div>
++        <div class="alert-msg">
++            <p> ¡Alerta de fraude! En Chubb nunca te pediremos depósitos en cuentas que no estén a nuestro nombre ni enviaremos correos desde dominios distintos a nuestros oficiales: @chubb.com y @chubbservicios.com. Chubb no se hace responsable por operaciones realizadas fuera de estos canales.</p>
++        </div>
++    </body>
++</html>
+diff --git a/apiserver/ix/tests/auto_relevo/test_aviso_documentacion_aprobada.py b/apiserver/ix/tests/auto_relevo/test_aviso_documentacion_aprobada.py
+new file mode 100644
+index 00000000..ec13150c
+--- /dev/null
++++ b/apiserver/ix/tests/auto_relevo/test_aviso_documentacion_aprobada.py
+@@ -0,0 +1,35 @@
++"""Aviso al asegurado cuando su documentación pasa a «Documentación completa»."""
++from types import SimpleNamespace
++from unittest.mock import MagicMock, patch
++
++import pytest
++
++from ix.boletas_informativas.auto_relevo.api.auto_relevo_boleta import auto_relevo_boleta_service as svc
++from ix.boletas_informativas.auto_relevo.api.auto_relevo_boleta.auto_relevo_boleta_models import EstatusServicioEnum
++
++EN_REVISION = EstatusServicioEnum.EN_REVISION.value
++COMPLETA = EstatusServicioEnum.DOCUMENTACION_COMPLETA.value
++
++
++def _recalcular(actual, todos_aprobados=True):
++    session = MagicMock()
++    session.query.return_value.get.return_value = SimpleNamespace(estatus_servicio=actual)
++    dm = MagicMock()
++    dm.has_rejected_documents.return_value = False
++    dm.are_all_documents_approved.return_value = todos_aprobados
++    dm.update_status_servicio_auto_relevo.return_value = SimpleNamespace()
++    with patch.object(svc, "g", SimpleNamespace(s=lambda: session)), \
++            patch.object(svc, "AutoRelevoDataManager", return_value=dm), \
++            patch.object(svc.AutoRelevoService, "_sync_event_status"), \
++            patch.object(svc.AutoRelevoNotificationsService, "envio_mail_documentacion_aprobada") as aviso:
++        svc.AutoRelevoService()._validate_status_flow(665)
++    return aviso
++
++
++def test_avisa_al_pasar_a_documentacion_completa():
++    _recalcular(EN_REVISION).assert_called_once_with(665)
++
++
++@pytest.mark.parametrize("actual,aprobados", [(COMPLETA, True), (EN_REVISION, False)])
++def test_no_avisa_sin_transicion_a_completa(actual, aprobados):
++    _recalcular(actual, aprobados).assert_not_called()
+-- 
+2.56.1
+

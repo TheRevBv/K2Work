@@ -1,0 +1,265 @@
+From 5ca828bc1fb093c94fe8a016f9f523858ee08cca Mon Sep 17 00:00:00 2001
+From: JoshMorinDev <joshua.morinsalazar@chubb.com>
+Date: Fri, 20 Nov 2026 13:34:53 -0600
+Subject: [PATCH 2/2] fix(autorelevo): notificar al asegurado cuando se
+ autoriza su servicio
+
+---
+ .../auto_relevo_boleta_service.py             |   4 +
+ .../notifications_manager.py                  |  37 ++++--
+ .../autorelevo_servicio_autorizado.html       | 112 ++++++++++++++++++
+ .../test_aviso_servicio_autorizado.py         |  45 +++++++
+ 4 files changed, 190 insertions(+), 8 deletions(-)
+ create mode 100644 apiserver/ix/boletas_informativas/auto_relevo/api/template/autorelevo_servicio_autorizado.html
+ create mode 100644 apiserver/ix/tests/auto_relevo/test_aviso_servicio_autorizado.py
+
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
+index e12b408c..c688ae02 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
+@@ -1244,8 +1244,12 @@ class AutoRelevoService:
+             servicio = g.s().query(ServicioAutoRelevo).filter(ServicioAutoRelevo.id == ticket_id).first()
+             self._validate_service_exists(servicio, ticket_id)
+             aprobado_previo = servicio.boleta_informativa.evaluador_aprobo_servicio if servicio.boleta_informativa else None
++            estatus_previo = servicio.estatus_servicio
+             self._aplicar_autorizacion_servicio(ticket_id, servicio, aprobado, comentario, aprobado_previo)
+             g.s().commit()
++            autorizado = EstatusServicioEnum.SERVICIO_AUTORIZADO.value
++            if servicio.estatus_servicio == autorizado and estatus_previo != autorizado:
++                AutoRelevoNotificationsService.envio_mail_servicio_autorizado(ticket_id)
+ 
+             logging.info("[autorelevo] autorización ticket=%s aprobado=%s comentario=%r", ticket_id, aprobado, comentario)
+             return {
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/notifications_manager.py b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/notifications_manager.py
+index 47decc7c..9f8b62cd 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/notifications_manager.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/notifications_manager.py
+@@ -75,12 +75,36 @@ class AutoRelevoNotificationsService:
+     @staticmethod
+     def envio_mail_documentacion_aprobada(servicio_id):
+         """Avisa al titular que su documentación fue aprobada; un fallo de envío solo se registra."""
++        AutoRelevoNotificationsService._envio_aviso_titular(
++            servicio_id,
++            "autorelevo_documentacion_aprobada.html",
++            "AUTO RELEVO - Documentación aprobada",
++        )
++
++    @staticmethod
++    def envio_mail_servicio_autorizado(servicio_id):
++        """Avisa al titular que su servicio fue autorizado, con el link al micrositio para reservar."""
++        AutoRelevoNotificationsService._envio_aviso_titular(
++            servicio_id,
++            "autorelevo_servicio_autorizado.html",
++            "AUTO RELEVO - Servicio autorizado",
++            url_micrositio=AutoRelevoNotificationsService.url_micrositio(),
++        )
++
++    @staticmethod
++    def url_micrositio():
++        """URL de entrada al micrositio del ambiente actual (misma base que el proxy de app.py)."""
++        app_id = os.getenv("GAE_APP_ID", "morfeo-dev-321917")
++        return f"https://micrositio-autorelevo-web-dot-{app_id}.ue.r.appspot.com/autorelevo/"
++
++    @staticmethod
++    def _envio_aviso_titular(servicio_id, template_name, subject, **extra):
+         try:
+             data = AutoRelevoNotificationsService.get_servicio_data(servicio_id)
+             if not data["correo_electronico"]:
+-                logging.warning("[autorelevo] Servicio %s sin correo para aviso de documentación aprobada", servicio_id)
++                logging.warning("[autorelevo] Servicio %s sin correo para aviso '%s'", servicio_id, subject)
+                 return
+-            template_path = os.path.join(os.path.dirname(__file__), "../template/autorelevo_documentacion_aprobada.html")
++            template_path = os.path.join(os.path.dirname(__file__), "../template", template_name)
+             with open(template_path, "r", encoding="utf-8") as file:
+                 email_template = file.read()
+             body = render_template_string(
+@@ -88,14 +112,11 @@ class AutoRelevoNotificationsService:
+                 nombre_cliente=data["nombre_completo"] or "",
+                 numero_siniestro=data["numero_siniestro"],
+                 poliza=data["poliza"],
++                **extra,
+             )
+-            send_email(
+-                recipients=data["correo_electronico"],
+-                subject="AUTO RELEVO - Documentación aprobada",
+-                body=body,
+-            )
++            send_email(recipients=data["correo_electronico"], subject=subject, body=body)
+         except Exception:
+-            logging.exception("[autorelevo] Error enviando aviso de documentación aprobada servicio_id=%s", servicio_id)
++            logging.exception("[autorelevo] Error enviando aviso '%s' servicio_id=%s", subject, servicio_id)
+ 
+     @staticmethod
+     def envio_mail(servicio_id,url,data_mail,email=None):
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/template/autorelevo_servicio_autorizado.html b/apiserver/ix/boletas_informativas/auto_relevo/api/template/autorelevo_servicio_autorizado.html
+new file mode 100644
+index 00000000..29382275
+--- /dev/null
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/template/autorelevo_servicio_autorizado.html
+@@ -0,0 +1,112 @@
++<!DOCTYPE html>
++<html lang="es">
++    <head>
++        <title>AUTO RELEVO - Servicio autorizado</title>
++        <meta charset="UTF-8" />
++        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
++        <style>
++            @import url("https://fonts.googleapis.com/css2?family=Lato:wght@400;700&display=swap");
++
++            body {
++                font-family: "Lato", Arial, sans-serif;
++                margin: 0;
++                padding: 0;
++                background-color: #f9f9f9;
++                color: #333;
++            }
++
++            .header-title {
++                font-size: 32px;
++                font-weight: 700;
++                line-height: 1.2;
++                text-align: left;
++                padding: 20px 40px;
++                background-color: #ecb432;
++                color: white;
++            }
++
++            .alert-msg {
++                font-size: 14px;
++                line-height: 1.2;
++                text-align: left;
++                padding: 20px 40px;
++                background-color: #ececec;
++                color: black;
++            }
++
++            .content-wrapper {
++                padding: 20px 40px;
++                background-color: white;
++                margin: 20px;
++                border-radius: 8px;
++                box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
++            }
++
++            .info {
++                font-size: 18px;
++                font-weight: 400;
++                line-height: 1.5;
++                margin-bottom: 20px;
++            }
++
++            .important {
++                font-weight: 700;
++                color: #7acb00;
++            }
++
++            .btn {
++                display: inline-block;
++                padding: 12px 28px;
++                background-color: #000000;
++                color: #ffffff !important;
++                font-size: 16px;
++                font-weight: 700;
++                text-decoration: none;
++                border-radius: 4px;
++            }
++
++            .semi-footer {
++                font-size: 16px;
++                font-weight: 400;
++                line-height: 24px;
++                text-align: left;
++                margin-top: 20px;
++            }
++        </style>
++    </head>
++    <body>
++        <div class="header-title">
++            <h1>
++                AUTO RELEVO - SERVICIO AUTORIZADO
++                {% if numero_siniestro %}
++                    Siniestro {{ numero_siniestro }}
++                {% elif poliza %}
++                    Póliza {{ poliza }}
++                {% endif %}
++            </h1>
++        </div>
++        <div class="content-wrapper">
++            <p class="info">Buen día</p>
++
++            <p class="info">Estimado (a): {{ nombre_cliente }}</p>
++            <p class="info">
++                Le informamos que su solicitud de auto relevo fue
++                <span class="important">autorizada</span>.
++            </p>
++            <p class="info">
++                Para continuar, ingrese al micrositio de Auto Relevo e inicie la reserva de su vehículo.
++            </p>
++            <p class="info">
++                <a class="btn" href="{{ url_micrositio }}">Iniciar reserva</a>
++            </p>
++            <p class="semi-footer">
++                En caso de que necesite conocer el estatus de su servicio, puede comunicarse a nuestros teléfonos y
++                uno de nuestros asesores se encargará de resolver cualquier duda o aclaración.
++            </p>
++            <p class="semi-footer">Saludos.</p>
++        </div>
++        <div class="alert-msg">
++            <p> ¡Alerta de fraude! En Chubb nunca te pediremos depósitos en cuentas que no estén a nuestro nombre ni enviaremos correos desde dominios distintos a nuestros oficiales: @chubb.com y @chubbservicios.com. Chubb no se hace responsable por operaciones realizadas fuera de estos canales.</p>
++        </div>
++    </body>
++</html>
+diff --git a/apiserver/ix/tests/auto_relevo/test_aviso_servicio_autorizado.py b/apiserver/ix/tests/auto_relevo/test_aviso_servicio_autorizado.py
+new file mode 100644
+index 00000000..14752313
+--- /dev/null
++++ b/apiserver/ix/tests/auto_relevo/test_aviso_servicio_autorizado.py
+@@ -0,0 +1,45 @@
++"""Aviso al asegurado cuando su servicio pasa a «Servicio autorizado»."""
++from types import SimpleNamespace
++from unittest.mock import MagicMock, patch
++
++import pytest
++
++from ix.boletas_informativas.auto_relevo.api.auto_relevo_boleta import auto_relevo_boleta_service as svc
++from ix.boletas_informativas.auto_relevo.api.auto_relevo_boleta.auto_relevo_boleta_models import EstatusServicioEnum
++
++COMPLETA = EstatusServicioEnum.DOCUMENTACION_COMPLETA.value
++AUTORIZADO = EstatusServicioEnum.SERVICIO_AUTORIZADO.value
++NO_AUTORIZADO = EstatusServicioEnum.NO_AUTORIZADO.value
++
++
++def _autorizar(actual, nuevo, aprobado=True):
++    servicio = SimpleNamespace(id=665, estatus_servicio=actual, boleta_informativa=None)
++    session = MagicMock()
++    session.query.return_value.filter.return_value.first.return_value = servicio
++
++    def aplicar(_self, *_args):
++        servicio.estatus_servicio = nuevo
++
++    with patch.object(svc, "g", SimpleNamespace(s=lambda: session)), \
++            patch.object(svc.AutoRelevoService, "_aplicar_autorizacion_servicio", aplicar), \
++            patch.object(svc.AutoRelevoNotificationsService, "envio_mail_servicio_autorizado") as aviso:
++        svc.AutoRelevoService().registrar_autorizacion(665, {"aprobado": aprobado, "comentario": "x"})
++    return aviso
++
++
++def test_avisa_al_autorizar():
++    _autorizar(COMPLETA, AUTORIZADO).assert_called_once_with(665)
++
++
++@pytest.mark.parametrize("actual,nuevo,aprobado", [
++    (COMPLETA, NO_AUTORIZADO, False),
++    (AUTORIZADO, AUTORIZADO, True),
++])
++def test_no_avisa_sin_transicion_a_autorizado(actual, nuevo, aprobado):
++    _autorizar(actual, nuevo, aprobado).assert_not_called()
++
++
++def test_url_micrositio_por_ambiente(monkeypatch):
++    monkeypatch.setenv("GAE_APP_ID", "morfeo-test")
++    assert svc.AutoRelevoNotificationsService.url_micrositio() == \
++        "https://micrositio-autorelevo-web-dot-morfeo-test.ue.r.appspot.com/autorelevo/"
+-- 
+2.56.1
+
