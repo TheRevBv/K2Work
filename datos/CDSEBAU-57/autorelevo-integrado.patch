@@ -1,0 +1,1638 @@
+From 897112e3a56e9c40f79f6a55d0bcbf5d1544abaa Mon Sep 17 00:00:00 2001
+From: JoshMorinDev <joshua.morinsalazar@chubb.com>
+Date: Fri, 6 Nov 2026 09:00:34 -0600
+Subject: [PATCH 1/9] =?UTF-8?q?fix(asistencias):=20detener=20flujo=20con?=
+ =?UTF-8?q?=20p=C3=B3liza=20cancelada=20o=20no=20vigente?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ .../assistance-cases-form/assistance-cases-form.component.ts   | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/admin/src/app/components/assistances/assistance-cases/assistance-cases-form/assistance-cases-form.component.ts b/admin/src/app/components/assistances/assistance-cases/assistance-cases-form/assistance-cases-form.component.ts
+index 190d6cd4..19087b7a 100644
+--- a/admin/src/app/components/assistances/assistance-cases/assistance-cases-form/assistance-cases-form.component.ts
++++ b/admin/src/app/components/assistances/assistance-cases/assistance-cases-form/assistance-cases-form.component.ts
+@@ -5490,9 +5490,10 @@ ${this.question5OtherLiquids.questions} ${this.question5OtherLiquids.answer}`;
+         this.messageService().add({
+           severity: 'error',
+           summary: 'Advertencia',
+-          detail: 'La póliza se encuentra vencida',
++          detail: 'La póliza está cancelada o no vigente',
+           life: 5000,
+         });
++        return;
+       }
+     } else {
+       this.sale.Poliza = this.policy;
+-- 
+2.56.1
+
+
+From 2dffa6088136b22515623b66687d23d5774e933a Mon Sep 17 00:00:00 2001
+From: JoshMorinDev <joshua.morinsalazar@chubb.com>
+Date: Fri, 6 Nov 2026 09:00:34 -0600
+Subject: [PATCH 2/9] =?UTF-8?q?fix(autorelevo):=20permitir=20autorizar=20t?=
+ =?UTF-8?q?ickets=20con=20veh=C3=ADculo=20entregado=20sin=20decisi=C3=B3n?=
+ =?UTF-8?q?=20del=20evaluador?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ .../auto_relevo_boleta_service.py             | 27 ++++++++++++-------
+ 1 file changed, 18 insertions(+), 9 deletions(-)
+
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
+index 3a9c7b77..5c90f50f 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
+@@ -336,12 +336,15 @@ class AutoRelevoService:
+             self._validate_service_exists(servicio, ticket_id)
+             
+             data_manager = AutoRelevoDataManager(g.s())
+-            
++            aprobado_previo = servicio.boleta_informativa.evaluador_aprobo_servicio if servicio.boleta_informativa else None
++
+             self._update_related_entities(data_manager, servicio, payload)
+             boleta_data = payload.get("boleta_informativa") if payload else None
+             if isinstance(boleta_data, dict) and isinstance(boleta_data.get("evaluador_aprobo_servicio"), bool):
+                 comentario = (boleta_data.get("motivo_evaluacion_servicio") or "").strip()
+-                self._aplicar_autorizacion_servicio(ticket_id, servicio, boleta_data["evaluador_aprobo_servicio"], comentario)
++                self._aplicar_autorizacion_servicio(
++                    ticket_id, servicio, boleta_data["evaluador_aprobo_servicio"], comentario, aprobado_previo
++                )
+             else:
+                 self._validate_status_flow(ticket_id)
+             g.s().commit()
+@@ -1111,7 +1114,8 @@ class AutoRelevoService:
+         if actual in ESTATUS_SIN_RECALCULO:
+             return
+ 
+-        if data_manager.are_vehiculo_fields_complete(ticket_id):
++        autorizado = actual in ESTATUS_AUTORIZADOS or actual == EstatusServicioEnum.VEHICULO_ENTREGADO.value
++        if autorizado and data_manager.are_vehiculo_fields_complete(ticket_id):
+             nuevo = EstatusServicioEnum.VEHICULO_ENTREGADO
+         elif actual in ESTATUS_AUTORIZADOS:
+             return
+@@ -1143,7 +1147,8 @@ class AutoRelevoService:
+         try:
+             servicio = g.s().query(ServicioAutoRelevo).filter(ServicioAutoRelevo.id == ticket_id).first()
+             self._validate_service_exists(servicio, ticket_id)
+-            self._aplicar_autorizacion_servicio(ticket_id, servicio, aprobado, comentario)
++            aprobado_previo = servicio.boleta_informativa.evaluador_aprobo_servicio if servicio.boleta_informativa else None
++            self._aplicar_autorizacion_servicio(ticket_id, servicio, aprobado, comentario, aprobado_previo)
+             g.s().commit()
+ 
+             logging.info("[autorelevo] autorización ticket=%s aprobado=%s comentario=%r", ticket_id, aprobado, comentario)
+@@ -1154,16 +1159,20 @@ class AutoRelevoService:
+         except SQLAlchemyError as e:
+             self._handle_error(str(e), ERROR_BD, 500)
+ 
+-    def _aplicar_autorizacion_servicio(self, ticket_id, servicio, aprobado, comentario):
+-        if servicio.estatus_servicio not in ESTATUS_AUTORIZABLES:
++    def _aplicar_autorizacion_servicio(self, ticket_id, servicio, aprobado, comentario, aprobado_previo):
++        # Tickets que llegaron a "Vehiculo entregado" sin decisión del evaluador se autorizan tarde.
++        autorizacion_tardia = (
++            servicio.estatus_servicio == EstatusServicioEnum.VEHICULO_ENTREGADO.value and aprobado_previo is None
++        )
++        if servicio.estatus_servicio not in ESTATUS_AUTORIZABLES and not autorizacion_tardia:
+             self._handle_error(
+                 f"El ticket {ticket_id} está en '{servicio.estatus_servicio}'; solo se autoriza con la documentación completa",
+                 ERROR_INVALID, 400, rollback=False
+             )
+ 
+-        nuevo = EstatusServicioEnum.SERVICIO_AUTORIZADO if aprobado else EstatusServicioEnum.NO_AUTORIZADO
+-        data_manager = AutoRelevoDataManager(g.s())
+-        data_manager.update_status_servicio_auto_relevo(ticket_id, nuevo.value)
++        if not (autorizacion_tardia and aprobado):
++            nuevo = EstatusServicioEnum.SERVICIO_AUTORIZADO if aprobado else EstatusServicioEnum.NO_AUTORIZADO
++            AutoRelevoDataManager(g.s()).update_status_servicio_auto_relevo(ticket_id, nuevo.value)
+ 
+         servicio.razon_estatus = comentario if comentario else None
+         servicio.audit_updated_at = DATE_TODAY
+-- 
+2.56.1
+
+
+From 4e1bbb2d80765442132a8c7850a71d835c85b025 Mon Sep 17 00:00:00 2001
+From: JoshMorinDev <joshua.morinsalazar@chubb.com>
+Date: Mon, 9 Nov 2026 14:52:29 -0600
+Subject: [PATCH 3/9] =?UTF-8?q?fix(autorelevo):=20d=C3=ADas=20desde=20la?=
+ =?UTF-8?q?=20reservaci=C3=B3n,=20motivo=20al=20autorizar=20y=20fechas=20d?=
+ =?UTF-8?q?e=20auditor=C3=ADa?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- dias_solicitados opcional al crear el ticket (micrositio); se ajusta con settle al reservar, según PRD.
+- Al aprobar, razon_estatus conserva el nombre del motivo; al rechazar guarda el comentario.
+- Admin: la autorización rehidrata la decisión guardada al entrar desde la lista.
+- DATE_TODAY se evaluaba una vez al arrancar; ahora datetime.now(timezone.utc) por escritura.
+---
+ .../authorization-data-form.component.ts      | 28 ++++++++++----
+ .../auto_relevo_boleta_service.py             | 32 +++++++++-------
+ .../auto_relevo_data_manager.py               | 38 +++++++++----------
+ .../auto_relevo_events_manager.py             | 16 +++++---
+ .../api/auto_relevo_boleta/definitions.py     |  1 -
+ .../api/auto_relevo_boleta/report_manager.py  |  3 +-
+ .../documents_manager_service.py              | 13 +++----
+ 7 files changed, 76 insertions(+), 55 deletions(-)
+
+diff --git a/admin/src/app/app-modules/relevo-car/authorization-data-form/authorization-data-form.component.ts b/admin/src/app/app-modules/relevo-car/authorization-data-form/authorization-data-form.component.ts
+index 6997d6c4..2ff2aff4 100644
+--- a/admin/src/app/app-modules/relevo-car/authorization-data-form/authorization-data-form.component.ts
++++ b/admin/src/app/app-modules/relevo-car/authorization-data-form/authorization-data-form.component.ts
+@@ -38,6 +38,8 @@ export class AuthorizationDataFormComponent implements OnInit, OnDestroy {
+             this.relevoStoreService.getRelevoCreatedTicketObserbable().subscribe(result => {
+ 
+                 this.createdTicket = result;
++                // El ticket puede llegar después de initForm (entrada desde la lista).
++                if (this.actionForm?.pristine) this.actionForm.patchValue(this.valoresTicket(), { emitEvent: false });
+ 
+ 
+             })
+@@ -85,15 +87,27 @@ export class AuthorizationDataFormComponent implements OnInit, OnDestroy {
+     }
+ 
+ 
++    private valoresTicket() {
++        const boleta = this.createdTicket?.BoletaInformativa;
++        return {
++            sinister_authorization_date: DateTimeTools.getDateTimeRequestFormat(boleta?.fecha_autorizacion_siniestro, false),
++            valuation_authorization_date: boleta?.tiempo_autorizacion_valuacion,
++            assignment_date: DateTimeTools.getDateTimeRequestFormat(boleta?.fecha_asignacion_auto, false),
++            authorization_time: boleta?.tiempo_asignacion,
++            evaluator_approved: boleta?.evaluador_aprobo_servicio,
++            rejection_reason: boleta?.motivo_evaluacion_servicio ?? '',
++        };
++    }
++
+     initForm() {
++        const v = this.valoresTicket();
+         this.actionForm = this.formBuilder.group({
+-            sinister_authorization_date: [DateTimeTools.getDateTimeRequestFormat(this.createdTicket?.BoletaInformativa?.fecha_autorizacion_siniestro, false), Validators.required],
+-            valuation_authorization_date: [this.createdTicket?.BoletaInformativa?.tiempo_autorizacion_valuacion, Validators.required],
+-            assignment_date: [DateTimeTools.getDateTimeRequestFormat(this.createdTicket?.BoletaInformativa?.fecha_asignacion_auto, false), Validators.required],
+-            authorization_time: [this.createdTicket?.BoletaInformativa?.tiempo_asignacion, Validators.required],
+-            evaluator_approved: [this.createdTicket?.BoletaInformativa?.evaluador_aprobo_servicio, Validators.required],
+-            rejection_reason: [this.createdTicket?.BoletaInformativa?.motivo_evaluacion_servicio ?? '']
+-
++            sinister_authorization_date: [v.sinister_authorization_date, Validators.required],
++            valuation_authorization_date: [v.valuation_authorization_date, Validators.required],
++            assignment_date: [v.assignment_date, Validators.required],
++            authorization_time: [v.authorization_time, Validators.required],
++            evaluator_approved: [v.evaluator_approved, Validators.required],
++            rejection_reason: [v.rejection_reason]
+         });
+     }
+ 
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
+index 5c90f50f..0215b324 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
+@@ -28,7 +28,6 @@ ERROR_NO_RESULTS = "Sin resultados"
+ ERROR_DUPLICATE = "Duplicado"
+ ERROR_INVALID = "Datos inválidos"
+ 
+-DATE_TODAY = datetime.now(timezone.utc)
+ 
+ # Campos de vigencia de Chubb, confirmados en la busqueda por poliza y por siniestro (formato 12/Oct/2027).
+ VIGENCIA_INICIO_KEYS = ("InicioVigencia", "FechaInicioVigencia")
+@@ -299,7 +298,7 @@ class AutoRelevoService:
+         
+             data_manager = AutoRelevoDataManager(g.s())
+             autorelevo_sinister = data_manager.create_autorelevo_sinister(sinister_data, parsed_payload)
+-            events_manager.reserve(events_count, autorelevo_sinister.id, payload["dias_solicitados"])
++            events_manager.reserve(events_count, autorelevo_sinister.id, payload.get("dias_solicitados") or 0)
+             boleta = data_manager.create_boleta_informativa(autorelevo_sinister.id, parsed_payload.get("boleta_informativa"))
+             datos_titular = data_manager.create_datos_titular(parsed_payload.get("datos_titular"))
+             data_manager.create_ubicacion_titular(datos_titular.id, parsed_payload.get("ubicacion_titular"))
+@@ -340,7 +339,9 @@ class AutoRelevoService:
+ 
+             self._update_related_entities(data_manager, servicio, payload)
+             boleta_data = payload.get("boleta_informativa") if payload else None
+-            if isinstance(boleta_data, dict) and isinstance(boleta_data.get("evaluador_aprobo_servicio"), bool):
++            # El admin reenvía la decisión en cada guardado; solo se aplica cuando cambia.
++            if (isinstance(boleta_data, dict) and isinstance(boleta_data.get("evaluador_aprobo_servicio"), bool)
++                    and boleta_data["evaluador_aprobo_servicio"] != aprobado_previo):
+                 comentario = (boleta_data.get("motivo_evaluacion_servicio") or "").strip()
+                 self._aplicar_autorizacion_servicio(
+                     ticket_id, servicio, boleta_data["evaluador_aprobo_servicio"], comentario, aprobado_previo
+@@ -430,7 +431,7 @@ class AutoRelevoService:
+             servicio.razon_estatus = payload.get("motivo_cierre", "Cierre de folio registrado.")
+             self._sync_event_status(servicio)
+             servicio.audit_updated_by = g.current_user.id
+-            servicio.audit_updated_at = DATE_TODAY
++            servicio.audit_updated_at = datetime.now(timezone.utc)
+             g.s().commit()
+ 
+             costos_dict = {
+@@ -523,7 +524,7 @@ class AutoRelevoService:
+                 motivo.descripcion = payload["descripcion"]
+ 
+             motivo.audit_updated_by = g.current_user.id
+-            motivo.audit_updated_at = DATE_TODAY
++            motivo.audit_updated_at = datetime.now(timezone.utc)
+             g.s().add(motivo)
+             g.s().commit()
+ 
+@@ -543,7 +544,7 @@ class AutoRelevoService:
+ 
+             motivo.active_record = False
+             motivo.audit_deleted_by = g.current_user.id
+-            motivo.audit_deleted_at = DATE_TODAY
++            motivo.audit_deleted_at = datetime.now(timezone.utc)
+             g.s().commit()
+ 
+             return {
+@@ -1092,7 +1093,7 @@ class AutoRelevoService:
+                 autorelevo_payload[key] = extra_data[key]
+ 
+         # Actualiza autorelevo
+-        autorelevo.audit_updated_at = DATE_TODAY
++        autorelevo.audit_updated_at = datetime.now(timezone.utc)
+         autorelevo.audit_updated_by = g.current_user.id
+ 
+         g.s().add(autorelevo)
+@@ -1134,8 +1135,9 @@ class AutoRelevoService:
+     def registrar_autorizacion(self, ticket_id, payload):
+         """Registra el resultado de la autorización (aprobado / no aprobado) de un servicio.
+ 
+-        Solo se permite cuando la documentación está completa. `comentario` se guarda
+-        en `razon_estatus` y es obligatorio si no se aprueba.
++        Solo se permite cuando la documentación está completa. `comentario` es obligatorio
++        si no se aprueba y entonces se guarda en `razon_estatus`; al aprobar, `razon_estatus`
++        conserva el nombre del motivo.
+         """
+         aprobado = payload.get("aprobado") if payload else None
+         comentario = (payload.get("comentario") or "").strip() if payload else ""
+@@ -1174,15 +1176,19 @@ class AutoRelevoService:
+             nuevo = EstatusServicioEnum.SERVICIO_AUTORIZADO if aprobado else EstatusServicioEnum.NO_AUTORIZADO
+             AutoRelevoDataManager(g.s()).update_status_servicio_auto_relevo(ticket_id, nuevo.value)
+ 
+-        servicio.razon_estatus = comentario if comentario else None
+-        servicio.audit_updated_at = DATE_TODAY
++        boleta = servicio.boleta_informativa
++        # razon_estatus es el motivo del servicio para el admin y el motivo de rechazo para el micrositio.
++        if aprobado:
++            servicio.razon_estatus = self._nombre_motivo(boleta.motivo_servicio_id) if boleta else servicio.razon_estatus
++        else:
++            servicio.razon_estatus = comentario or None
++        servicio.audit_updated_at = datetime.now(timezone.utc)
+         servicio.audit_updated_by = g.current_user.id
+         g.s().add(servicio)
+ 
+-        boleta = servicio.boleta_informativa
+         if boleta:
+             boleta.evaluador_aprobo_servicio = aprobado
+             boleta.motivo_evaluacion_servicio = comentario if comentario else None
+-            boleta.audit_updated_at = DATE_TODAY
++            boleta.audit_updated_at = datetime.now(timezone.utc)
+             boleta.audit_updated_by = g.current_user.id
+             g.s().add(boleta)
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_data_manager.py b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_data_manager.py
+index 901f68a7..b84f5405 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_data_manager.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_data_manager.py
+@@ -50,7 +50,7 @@ class AutoRelevoDataManager:
+             poliza=sinister_data.get("policy_number"),
+             prefijo=sinister_data.get("policy_key"),
+             sponsor=payload.get("sponsor", ""),    
+-            audit_created_at=Constants.DATE_TODAY,
++            audit_created_at=datetime.now(timezone.utc),
+             audit_created_by=g.current_user.id,
+             product_id = payload.get("product_id"),
+             plan_id = payload.get("plan_id"),
+@@ -67,7 +67,7 @@ class AutoRelevoDataManager:
+ 
+         self.validate_integer_field("tiempo_autorizacion_valuacion", boleta_data.get(Constants.AUTH_TIME))
+         self.validate_integer_field("tiempo_asignacion", boleta_data.get(Constants.ASSIGNMENT_TIME))
+-        fecha_solicitud = self.convert_iso_to_mysql(boleta_data.get("fecha_solicitud")) or Constants.DATE_TODAY
++        fecha_solicitud = self.convert_iso_to_mysql(boleta_data.get("fecha_solicitud")) or datetime.now(timezone.utc)
+         
+         boleta = BoletaInformativa(
+             siniestro_id=siniestro_id,
+@@ -84,7 +84,7 @@ class AutoRelevoDataManager:
+             tiempo_asignacion=boleta_data.get(Constants.ASSIGNMENT_TIME, 0),
+             motivo_activacion_servicio=boleta_data.get("motivo_activacion_servicio"),
+             motivo_servicio_id=boleta_data.get("motivo_servicio_id"),
+-            audit_created_at=Constants.DATE_TODAY,
++            audit_created_at=datetime.now(timezone.utc),
+             audit_created_by=g.current_user.id
+         )
+         self.session.add(boleta)
+@@ -98,7 +98,7 @@ class AutoRelevoDataManager:
+                 nombre_completo=datos_titular_data.get(Constants.FULL_NAME, "Pendiente"),
+                 telefono_contacto=datos_titular_data.get(Constants.PHONE_CONTACT, "Pendiente"),
+                 correo_electronico=datos_titular_data.get(Constants.MAIL_CONTACT, "Pendiente"),
+-                audit_created_at=Constants.DATE_TODAY,
++                audit_created_at=datetime.now(timezone.utc),
+                 audit_created_by=g.current_user.id
+             )
+         else:
+@@ -106,7 +106,7 @@ class AutoRelevoDataManager:
+                 nombre_completo="Pendiente",
+                 telefono_contacto="Pendiente",
+                 correo_electronico="Pendiente",
+-                audit_created_at=Constants.DATE_TODAY,
++                audit_created_at=datetime.now(timezone.utc),
+                 audit_created_by=g.current_user.id
+             )
+         self.session.add(titular)
+@@ -121,7 +121,7 @@ class AutoRelevoDataManager:
+                 estado=ubicacion_data.get(Constants.STATE, "Pendiente"),
+                 municipio=ubicacion_data.get(Constants.CITY, "Pendiente"),
+                 codigo_postal=ubicacion_data.get(Constants.ZIP_CODE, "Pendiente"),
+-                audit_created_at=Constants.DATE_TODAY,
++                audit_created_at=datetime.now(timezone.utc),
+                 audit_created_by=g.current_user.id
+             )
+         else:
+@@ -130,7 +130,7 @@ class AutoRelevoDataManager:
+                 estado="Pendiente",
+                 municipio="Pendiente",
+                 codigo_postal="Pendiente",
+-                audit_created_at=Constants.DATE_TODAY,
++                audit_created_at=datetime.now(timezone.utc),
+                 audit_created_by=g.current_user.id
+             )
+         self.session.add(ubicacion)
+@@ -149,7 +149,7 @@ class AutoRelevoDataManager:
+             **{
+                 "grupo_vehiculo_id": vehiculo_data.get(Constants.GROUP_VEHICLE_ID)  
+             },
+-            audit_created_at=Constants.DATE_TODAY,
++            audit_created_at=datetime.now(timezone.utc),
+             audit_created_by=g.current_user.id
+         )
+         self.session.add(vehiculo)
+@@ -176,7 +176,7 @@ class AutoRelevoDataManager:
+                 servicio_id=servicio_id,
+                 documento_requerido_id=doc.id,
+                 estatus_validacion="Pendiente",
+-                audit_created_at=Constants.DATE_TODAY,
++                audit_created_at=datetime.now(timezone.utc),
+                 audit_created_by=g.current_user.id
+             )
+             self.session.add(validacion)
+@@ -191,7 +191,7 @@ class AutoRelevoDataManager:
+             tipo_servicio_id=tipo_servicio_id,
+             estatus_servicio=EstatusServicioEnum.EN_REVISION,
+             razon_estatus=payload.get("razon_estatus") if payload else None,
+-            audit_created_at=Constants.DATE_TODAY,
++            audit_created_at=datetime.now(timezone.utc),
+             audit_created_by=g.current_user.id
+         )
+         self.session.add(servicio)
+@@ -205,7 +205,7 @@ class AutoRelevoDataManager:
+             if item in payload and payload[item] is not None:
+                 setattr(servicio, item, payload[item]) 
+         
+-        servicio.audit_updated_at = Constants.DATE_TODAY
++        servicio.audit_updated_at = datetime.now(timezone.utc)
+         servicio.audit_updated_by = g.current_user.id
+         self.session.add(servicio)
+     
+@@ -228,7 +228,7 @@ class AutoRelevoDataManager:
+                 boleta.motivo_activacion_servicio = None
+         
+         # Actualizar en el definitions.py los nuevos campos de boleta
+-        boleta.audit_updated_at = Constants.DATE_TODAY
++        boleta.audit_updated_at = datetime.now(timezone.utc)
+         boleta.audit_updated_by = g.current_user.id
+         self.session.add(boleta)
+ 
+@@ -238,7 +238,7 @@ class AutoRelevoDataManager:
+             if item in datos_titular_data and datos_titular_data[item] is not None:
+                 setattr(titular, item, datos_titular_data[item])
+                 
+-        titular.audit_updated_at = Constants.DATE_TODAY
++        titular.audit_updated_at = datetime.now(timezone.utc)
+         titular.audit_updated_by = g.current_user.id
+         self.session.add(titular)
+ 
+@@ -247,7 +247,7 @@ class AutoRelevoDataManager:
+         for item in Constants.FIELDS_LOCATION:
+             if item in ubicacion_data and ubicacion_data[item] is not None:
+                 setattr(ubicacion, item, ubicacion_data[item])
+-        ubicacion.audit_updated_at = Constants.DATE_TODAY
++        ubicacion.audit_updated_at = datetime.now(timezone.utc)
+         ubicacion.audit_updated_by = g.current_user.id
+         self.session.add(ubicacion)
+ 
+@@ -257,7 +257,7 @@ class AutoRelevoDataManager:
+             if item in vehiculo_data and vehiculo_data[item] is not None:
+                 setattr(vehiculo, item, vehiculo_data[item])
+                 
+-        vehiculo.audit_updated_at = Constants.DATE_TODAY
++        vehiculo.audit_updated_at = datetime.now(timezone.utc)
+         vehiculo.audit_updated_by = g.current_user.id
+         self.session.add(vehiculo)
+ 
+@@ -267,7 +267,7 @@ class AutoRelevoDataManager:
+         if "comentario_validacion" in validacion_data and validacion_data["comentario_validacion"] is not None:
+             validacion.comentario_validacion = validacion_data["comentario_validacion"]
+         
+-        validacion.audit_updated_at = Constants.DATE_TODAY
++        validacion.audit_updated_at = datetime.now(timezone.utc)
+         validacion.audit_updated_by = g.current_user.id
+         self.session.add(validacion)
+ 
+@@ -278,7 +278,7 @@ class AutoRelevoDataManager:
+             servicio = self.session.query(ServicioAutoRelevo).get(servicio_id)
+             if servicio and servicio.boleta_informativa:
+                 servicio.boleta_informativa.fecha_recepcion_documentos = fecha_aprobados
+-                servicio.boleta_informativa.audit_updated_at = Constants.DATE_TODAY
++                servicio.boleta_informativa.audit_updated_at = datetime.now(timezone.utc)
+                 servicio.boleta_informativa.audit_updated_by = g.current_user.id
+                 self.session.add(servicio.boleta_informativa)
+ 
+@@ -301,7 +301,7 @@ class AutoRelevoDataManager:
+             taxes=payload.get("taxes"),
+             subtotal=payload.get("subtotal"),
+             costo_total_servicio=payload["costo_total_servicio"],
+-            audit_created_at=Constants.DATE_TODAY,
++            audit_created_at=datetime.now(timezone.utc),
+             audit_created_by=g.current_user.id,
+         )
+ 
+@@ -502,7 +502,7 @@ class AutoRelevoDataManager:
+                 raise errors.ApiError(Constants.SERVICE_NOT_FOUND, 404)
+ 
+             servicio.estatus_servicio = nuevo_estatus
+-            servicio.audit_updated_at = Constants.DATE_TODAY
++            servicio.audit_updated_at = datetime.now(timezone.utc)
+             servicio.audit_updated_by = usuario_id or g.current_user.id
+             
+             self.session.add(servicio)
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_events_manager.py b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_events_manager.py
+index 10efd333..0bdec29f 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_events_manager.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_events_manager.py
+@@ -1,4 +1,4 @@
+-from datetime import date, datetime, timedelta
++from datetime import date, datetime, timedelta, timezone
+ from flask import g
+ from ix.api import errors
+ from ix.boletas_informativas.auto_relevo.api.auto_relevo_boleta.auto_relevo_boleta_models import (
+@@ -58,12 +58,16 @@ class AutoRelevoEventsManager:
+         count.audit_updated_by = g.current_user.id
+ 
+     def validate_and_get_count(self, prefijo, poliza, inciso, vigencia_inicio, vigencia_fin, dias):
+-        """Valida vigencia y eventos disponibles. Crea el conteo si es la primera vez en la vigencia."""
++        """Valida vigencia y eventos disponibles. Crea el conteo si es la primera vez en la vigencia.
++
++        `dias` es opcional: el micrositio no los conoce al crear el folio; se toman de las
++        fechas de la reservación vía `settle`.
++        """
+         if not vigencia_fin:
+             self._error("No se pudo determinar la vigencia de la póliza para validar los eventos de AutoRelevo.")
+         if vigencia_fin < date.today():
+             self._error(f"La vigencia de la póliza terminó el {vigencia_fin.strftime('%d/%m/%Y')}, no se puede generar el folio.")
+-        if not isinstance(dias, int) or isinstance(dias, bool) or dias < 1:
++        if dias is not None and (not isinstance(dias, int) or isinstance(dias, bool) or dias < 1):
+             self._error("Debe indicar los días de renta del vehículo (mínimo 1).")
+ 
+         # Si Chubb no informa el inicio, se aproxima un anio atras para poder identificar la vigencia.
+@@ -75,7 +79,7 @@ class AutoRelevoEventsManager:
+                 vigencia_inicio=inicio, vigencia_fin=vigencia_fin,
+                 eventos_total=Constants.DEFAULT_EVENTS_TOTAL, eventos_usados=0,
+                 eventos_restantes=Constants.DEFAULT_EVENTS_TOTAL,
+-                audit_created_at=Constants.DATE_TODAY, audit_created_by=g.current_user.id,
++                audit_created_at=datetime.now(timezone.utc), audit_created_by=g.current_user.id,
+             )
+             self.session.add(count)
+             self.session.flush()
+@@ -91,7 +95,7 @@ class AutoRelevoEventsManager:
+ 
+         if count.eventos_restantes <= 0:
+             self._error("No hay días de renta de AutoRelevo disponibles en la vigencia de la póliza, no se puede generar el folio.")
+-        if dias > count.eventos_restantes:
++        if dias and dias > count.eventos_restantes:
+             self._error(f"Los días de renta solicitados ({dias}) exceden los disponibles: solo quedan {count.eventos_restantes} días de AutoRelevo en la vigencia de la póliza.")
+         return count
+ 
+@@ -101,7 +105,7 @@ class AutoRelevoEventsManager:
+             autorelevo_sinister_id=autorelevo_sinister_id, events_count_id=count.id,
+             poliza=count.poliza, prefijo=count.prefijo, status_eventos=EstatusEventoEnum.RESERVADO,
+             fecha_inicio_eventos=fecha_inicio, fecha_fin_eventos=fecha_fin, numero_eventos=dias,
+-            audit_created_at=Constants.DATE_TODAY, audit_created_by=g.current_user.id,
++            audit_created_at=datetime.now(timezone.utc), audit_created_by=g.current_user.id,
+         )
+         self.session.add(event)
+         count.eventos_usados += dias
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/definitions.py b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/definitions.py
+index 8da1147c..1de70503 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/definitions.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/definitions.py
+@@ -2,7 +2,6 @@ from datetime import datetime, timezone
+ 
+ 
+ class Constants:
+-    DATE_TODAY = datetime.now(timezone.utc)
+     SERVICE_NOT_FOUND = "Service not found"
+     SERVICE_FOLIO = "folio_servicio"
+     RESERVATION_NUMBER = "numero_reservacion"
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/report_manager.py b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/report_manager.py
+index 8fa4878e..5a922ff4 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/report_manager.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/report_manager.py
+@@ -23,7 +23,6 @@ import logging
+ from queue import Queue
+ import threading
+ 
+-DATE_TODAY = datetime.now(timezone.utc)
+ tasks = Queue()
+ 
+ def reconnect_on_failure(engine: Engine):
+@@ -146,7 +145,7 @@ class GeneracionReporte:
+             fecha_fin=fecha_fin,
+             tipo_documento=tipo_documento,
+             estatus=EstatusReporte.pending,
+-            audit_created_at=DATE_TODAY,
++            audit_created_at=datetime.now(timezone.utc),
+             audit_created_by=g.current_user.id
+         )
+ 
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/documents_manager/documents_manager_service.py b/apiserver/ix/boletas_informativas/auto_relevo/api/documents_manager/documents_manager_service.py
+index 284251ca..400f9c67 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/documents_manager/documents_manager_service.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/documents_manager/documents_manager_service.py
+@@ -12,7 +12,6 @@ ERROR_INVALID_ID = "ID inválido"
+ ERROR_UNEXPECTED = "Error inesperado"
+ ERROR_INTERNAL = "Error interno"
+ 
+-DATE_TODAY = datetime.now(timezone.utc)
+ 
+ def handle_exceptions(func):
+     """Decorador para manejar excepciones comunes."""
+@@ -82,7 +81,7 @@ class DocumentsManagerService:
+             descripcion=descripcion,
+             audit_created_by=created_by,
+             audit_updated_by=created_by,
+-            audit_created_at=DATE_TODAY
++            audit_created_at=datetime.now(timezone.utc)
+         )
+         g.s().add(tipo_servicio)
+         g.s().commit()
+@@ -143,7 +142,7 @@ class DocumentsManagerService:
+             tipo_servicio.descripcion = descripcion
+         if updated_by:
+             tipo_servicio.audit_updated_by = updated_by
+-        tipo_servicio.audit_updated_at = DATE_TODAY
++        tipo_servicio.audit_updated_at = datetime.now(timezone.utc)
+ 
+         g.s().commit()
+         data = {
+@@ -165,7 +164,7 @@ class DocumentsManagerService:
+             "descripcion": tipo_servicio.descripcion
+         }
+         tipo_servicio.active_record = False
+-        tipo_servicio.audit_deleted_at = DATE_TODAY
++        tipo_servicio.audit_deleted_at = datetime.now(timezone.utc)
+         tipo_servicio.audit_deleted_by = deleted_by
+         g.s().commit()
+         return {"detail": "Tipo de servicio eliminado exitosamente", "data": data}
+@@ -190,7 +189,7 @@ class DocumentsManagerService:
+             obligatorio=obligatorio,
+             audit_created_by=created_by,
+             audit_updated_by=created_by,
+-            audit_created_at=DATE_TODAY
++            audit_created_at=datetime.now(timezone.utc)
+         )
+         g.s().add(documento)
+         g.s().commit()
+@@ -280,7 +279,7 @@ class DocumentsManagerService:
+             documento.obligatorio = obligatorio
+         if updated_by:
+             documento.audit_updated_by = updated_by
+-        documento.audit_updated_at = DATE_TODAY
++        documento.audit_updated_at = datetime.now(timezone.utc)
+ 
+         g.s().commit()
+         data = {
+@@ -306,7 +305,7 @@ class DocumentsManagerService:
+             "obligatorio": documento.obligatorio
+         }
+         documento.active_record = False
+-        documento.audit_deleted_at = DATE_TODAY
++        documento.audit_deleted_at = datetime.now(timezone.utc)
+         documento.audit_deleted_by = deleted_by
+         g.s().commit()
+         return {"detail": "Documento requerido eliminado exitosamente", "data": data}
+\ No newline at end of file
+-- 
+2.56.1
+
+
+From cc0bd193eea723b31cf94a386f75591ec8eec88f Mon Sep 17 00:00:00 2001
+From: JoshMorinDev <joshua.morinsalazar@chubb.com>
+Date: Tue, 10 Nov 2026 10:31:54 -0600
+Subject: [PATCH 4/9] fix(autorelevo): improve policy validation error handling
+ and add new fields to related models
+
+---
+ .../auto_relevo_boleta_service.py             |  8 ++--
+ .../auto_relevo/api/utils/related_models.py   |  2 +
+ apiserver/ix/tests/test_autorelevo_policy.py  | 40 +++++++++++++++++++
+ .../ix/tools/services/autorelevo_policy.py    |  8 +++-
+ 4 files changed, 53 insertions(+), 5 deletions(-)
+ create mode 100644 apiserver/ix/tests/test_autorelevo_policy.py
+
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
+index 0215b324..68e8ed51 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
+@@ -89,11 +89,11 @@ class AutoRelevoService:
+             data = {"sinister_chubb_id": siniestro}
+             url += "9"
+         else:
+-            desgloce_poliza = poliza.split('|')
++            clave, numero, inciso = self._parse_policy_parts(poliza)
+             data = {
+-                "ClaveId": desgloce_poliza[0],
+-                "PolizaId": desgloce_poliza[1],
+-                "NumeroInciso": desgloce_poliza[-1]
++                "ClaveId": clave,
++                "PolizaId": numero,
++                "NumeroInciso": inciso or ""
+             }
+             url += "3"
+ 
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/utils/related_models.py b/apiserver/ix/boletas_informativas/auto_relevo/api/utils/related_models.py
+index c621d196..5ec8178a 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/utils/related_models.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/utils/related_models.py
+@@ -33,6 +33,8 @@ related_models = {
+         "total_dias_journey": True,
+         "tiempo_autorizacion_valuacion": True,
+         "tiempo_asignacion": True,
++        "evaluador_aprobo_servicio": True,
++        "motivo_evaluacion_servicio": True,
+         "motivo_activacion_servicio": True,
+         "motivo_servicio_id":True,
+         "plan_id": True
+diff --git a/apiserver/ix/tests/test_autorelevo_policy.py b/apiserver/ix/tests/test_autorelevo_policy.py
+new file mode 100644
+index 00000000..344cb2e8
+--- /dev/null
++++ b/apiserver/ix/tests/test_autorelevo_policy.py
+@@ -0,0 +1,40 @@
++from unittest.mock import MagicMock, patch
++
++import pytest
++
++from ix.tools.services.autorelevo_policy import AutorelevoPolicyService
++
++
++def _respuesta(status, json_value=None, json_error=None):
++    r = MagicMock(status_code=status)
++    r.json.side_effect = json_error if json_error else (lambda: json_value)
++    return r
++
++
++@pytest.fixture
++def svc():
++    with patch.object(AutorelevoPolicyService, "get_headers", return_value={}), \
++         patch.object(AutorelevoPolicyService, "_validate_url", return_value="http://x/Policy/Validate"):
++        yield AutorelevoPolicyService()
++
++
++def test_html_del_gateway_reintenta_y_no_es_poliza_invalida(svc):
++    html = _respuesta(500, json_error=ValueError("Expecting value"))
++    ok = _respuesta(200, {"isSuccess": True})
++    with patch("ix.tools.services.autorelevo_policy.req_lib.post", side_effect=[html, ok]) as post:
++        assert svc.validate_policy("Q250027051", 1, "2016019796") == {"isSuccess": True}
++    assert post.call_count == 2
++
++
++def test_falla_transitoria_persistente_no_es_value_error(svc):
++    html = _respuesta(200, json_error=ValueError("Expecting value"))
++    with patch("ix.tools.services.autorelevo_policy.req_lib.post", return_value=html):
++        with pytest.raises(RuntimeError):
++            svc.validate_policy("Q250027051", 1, "2016019796")
++
++
++def test_poliza_rechazada_sigue_siendo_value_error(svc):
++    rechazo = _respuesta(400, {"isSuccess": False, "messages": [{"message": "Póliza no válida"}]})
++    with patch("ix.tools.services.autorelevo_policy.req_lib.post", return_value=rechazo):
++        with pytest.raises(ValueError, match="Póliza no válida"):
++            svc.validate_policy("Q250027051", 1, "2016019796")
+diff --git a/apiserver/ix/tools/services/autorelevo_policy.py b/apiserver/ix/tools/services/autorelevo_policy.py
+index 8e8ac44f..314f7a08 100644
+--- a/apiserver/ix/tools/services/autorelevo_policy.py
++++ b/apiserver/ix/tools/services/autorelevo_policy.py
+@@ -35,7 +35,13 @@ class AutorelevoPolicyService(ChubbPolicy):
+                     headers=self.get_headers(),
+                     timeout=30,
+                 )
+-                result = response.json()
++                # HTML o 5xx del gateway es falla transitoria: RuntimeError reintenta; ValueError sería "póliza no válida".
++                if response.status_code >= 500:
++                    raise RuntimeError(f"Policy/Validate HTTP {response.status_code}")
++                try:
++                    result = response.json()
++                except ValueError as exc:
++                    raise RuntimeError(f"Policy/Validate respuesta no JSON (HTTP {response.status_code})") from exc
+                 print(f"[validate_policy] HTTP={response.status_code} isSuccess={result.get('isSuccess')} responseData={str(result.get('responseData',''))[:120]}")
+ 
+                 # isSuccess=True es suficiente para aprobar — responseData puede ser
+-- 
+2.56.1
+
+
+From f4038e5e3f933bb54bcfadca903ace7de7da3206 Mon Sep 17 00:00:00 2001
+From: JoshMorinDev <joshua.morinsalazar@chubb.com>
+Date: Tue, 10 Nov 2026 14:11:14 -0600
+Subject: [PATCH 5/9] chore(autorelevo): alinear apiserver con la version
+ desplegada en dev
+
+Importa desde la version micrositio-autorelevo-2: validacion de 48 horas del
+siniestro, FechaReporteSiniestro, vigencia vencida con siniestro, folio abierto
+por poliza (409 y filtro abierto), liberacion del evento al cancelar y
+search-event?solo_venta. Incluye los tests de folios abiertos.
+---
+ apiserver/app.morfeo-dev-321917.yaml          |  19 ++-
+ apiserver/app.morfeo-prod.yaml                |   8 +
+ apiserver/app.morfeo-test.yaml                |   8 +
+ apiserver/ix/api/endpoints/assistancechubb.py |   2 +
+ .../auto_relevo_boleta_models.py              |   1 +
+ .../auto_relevo_boleta_routes.py              |  14 +-
+ .../auto_relevo_boleta_service.py             | 108 ++++++++++--
+ .../auto_relevo_events_manager.py             |  23 ++-
+ apiserver/ix/tests/auto_relevo/__init__.py    |   0
+ .../auto_relevo/test_tickets_abiertos.py      | 159 ++++++++++++++++++
+ 10 files changed, 320 insertions(+), 22 deletions(-)
+ create mode 100644 apiserver/ix/tests/auto_relevo/__init__.py
+ create mode 100644 apiserver/ix/tests/auto_relevo/test_tickets_abiertos.py
+
+diff --git a/apiserver/app.morfeo-dev-321917.yaml b/apiserver/app.morfeo-dev-321917.yaml
+index b9f54471..fd0bce5c 100644
+--- a/apiserver/app.morfeo-dev-321917.yaml
++++ b/apiserver/app.morfeo-dev-321917.yaml
+@@ -81,6 +81,14 @@ handlers:
+   static_files: static/index.html
+   upload: static/index.html
+   secure: always
++- url: /tokenrecovery
++  static_files: static/index.html
++  upload: static/index.html
++  secure: always
++- url: /passwordrecovery
++  static_files: static/index.html
++  upload: static/index.html
++  secure: always
+   http_headers:
+     Strict-Transport-Security: "max-age=31536000; includeSubDomains"
+     X-XSS-Protection: "1; mode=block"
+@@ -102,7 +110,7 @@ env_variables:
+   SYSTEM_URL: 'https://ahio-test-dot-morfeo-dev-321917.ue.r.appspot.com'
+   K2_API_URL: 'https://dev.k2web.online'
+   IS_PROD_ENV: 'False'
+-  SEND_SMS: 'False'
++  SEND_SMS: 'True'
+   WKHTMLTOPDF_PATH: '/usr/local/bin/wkhtmltopdf'
+   DISPATCHER_JOB_USER: '1646'
+   SPECIAL_ACCOUNTS: 'CE'
+@@ -183,3 +191,12 @@ env_variables:
+   MELI_BASE_URL: 'https://uat.latam.studiogateway.chubb.com'
+   MELI_TOKEN_PATH: '/enterprise.operations.authorization?Identity=AAD'
+   MELI_NOTIFICATION_PATH: '/digital.automation.chubboneevents'
++
++#   OTP_TEST_PHONE: '4428216543'
++#   OTP_TEST_EMAIL: 'donovan.lopez@chubb.com'
++  OTP_TEST_PHONE: '4792348066'
++  OTP_TEST_EMAIL: 'joshua.morinsalazar@chubb.com'
++#   OTP_TEST_PHONE: '5569132316'
++#   OTP_TEST_EMAIL: 'Ian.Tellez@Chubb.com'
++#   OTP_TEST_PHONE: '8711880933'
++#   OTP_TEST_EMAIL: 'Ian.Tellez@Chubb.com'
+\ No newline at end of file
+diff --git a/apiserver/app.morfeo-prod.yaml b/apiserver/app.morfeo-prod.yaml
+index 414723c6..beed8d2f 100644
+--- a/apiserver/app.morfeo-prod.yaml
++++ b/apiserver/app.morfeo-prod.yaml
+@@ -86,6 +86,14 @@ handlers:
+   static_files: static/index.html
+   upload: static/index.html
+   secure: always
++- url: /tokenrecovery
++  static_files: static/index.html
++  upload: static/index.html
++  secure: always
++- url: /passwordrecovery
++  static_files: static/index.html
++  upload: static/index.html
++  secure: always  
+   http_headers:
+     Strict-Transport-Security: max-age=31536000; includeSubDomains
+     X-XSS-Protection: 1; mode=block
+diff --git a/apiserver/app.morfeo-test.yaml b/apiserver/app.morfeo-test.yaml
+index eddaf25b..d918d9d2 100644
+--- a/apiserver/app.morfeo-test.yaml
++++ b/apiserver/app.morfeo-test.yaml
+@@ -81,6 +81,14 @@ handlers:
+   static_files: static/index.html
+   upload: static/index.html
+   secure: always
++- url: /tokenrecovery
++  static_files: static/index.html
++  upload: static/index.html
++  secure: always
++- url: /passwordrecovery
++  static_files: static/index.html
++  upload: static/index.html
++  secure: always  
+   http_headers:
+     Strict-Transport-Security: max-age=31536000; includeSubDomains
+     X-XSS-Protection: 1; mode=block
+diff --git a/apiserver/ix/api/endpoints/assistancechubb.py b/apiserver/ix/api/endpoints/assistancechubb.py
+index a0bcfd97..0fc79c9d 100644
+--- a/apiserver/ix/api/endpoints/assistancechubb.py
++++ b/apiserver/ix/api/endpoints/assistancechubb.py
+@@ -305,6 +305,8 @@ def getDataSiniestro(id_siniestro):
+         effectiveDate_finvigencia = effectiveDate_finvigencia.replace("/Dec/","/Dic/")
+   
+     data_siniestro["FechaSiniestro"]=effectiveDate
++    # Fecha en que el siniestro se reportó a Chubb (mismo formato mm/dd/aaaa hh:mm:ss AM/PM)
++    data_siniestro["FechaReporteSiniestro"] = bien_asegurado.get("fechaReporteSiniestro")
+     data_siniestro["InicioVigencia"]=effectiveDate_vigencia
+     data_siniestro["FinVigencia"]=effectiveDate_finvigencia
+     
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_models.py b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_models.py
+index 43c6649c..d5253440 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_models.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_models.py
+@@ -276,6 +276,7 @@ class EstatusEventoEnum:
+     RESERVADO = "reservado"
+     EN_CURSO = "en_curso"
+     FINALIZADO = "finalizado"
++    CANCELADO = "cancelado"
+ 
+ 
+ class AutorelevoEvent(database.Model, Base, AuditEntity):
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_routes.py b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_routes.py
+index 826f00c8..e5f8fc96 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_routes.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_routes.py
+@@ -22,14 +22,16 @@ from ix.boletas_informativas.auto_relevo.api.auto_relevo_boleta.auto_relevo_data
+ def search_event_auto_relevo():
+     siniestro = request.args.get("siniestro")
+     poliza = request.args.get("poliza")
+-    
++    # Sin siniestro (avería mecánica): valida solo la venta/vigencia de la póliza, sin buscar siniestros previos
++    solo_venta = request.args.get("solo_venta", "").strip().lower() in ("1", "true")
++
+     auth_header = request.headers.get("Authorization")
+-      
++
+     if not siniestro and not poliza:
+         raise errors.ApiError("Debe proporcionar al menos siniestro o póliza como parámetros en la URL", 400)
+-    
++
+     auto_relevo = AutoRelevoService()
+-    return auto_relevo.search_sinister(siniestro, poliza,auth_header)
++    return auto_relevo.search_sinister(siniestro, poliza, auth_header, solo_venta=solo_venta)
+ 
+ @wrappers.api_resource('/v1/boleta-informativa/auto-relevo/tickets', 'GET')
+ @wrappers.auth
+@@ -50,6 +52,7 @@ def list_tickets_auto_relevo():
+     page = request.args.get("page", 1, type=int)
+     limit = request.args.get("limit", 10, type=int)
+     generic_filter = request.args.get("filtro_generico")
++    solo_abiertos = request.args.get("abierto", "").strip().lower() in ("1", "true")
+ 
+     auto_relevo = AutoRelevoService()
+     return auto_relevo.list_tickets(
+@@ -61,7 +64,8 @@ def list_tickets_auto_relevo():
+         estatus_servicio=estatus_servicio,
+         policy=policy,
+         order=order,
+-        generic_filter=generic_filter
++        generic_filter=generic_filter,
++        solo_abiertos=solo_abiertos
+     )
+ 
+ @wrappers.api_resource('/v1/boleta-informativa/auto-relevo/tickets/<int:ticket_id>', 'GET')
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
+index 68e8ed51..a4f01c7b 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
+@@ -2,7 +2,8 @@ from flask import g
+ from sqlalchemy import func
+ from sqlalchemy.exc import SQLAlchemyError
+ from ix.api import errors
+-from datetime import datetime, timezone
++from datetime import datetime, timedelta, timezone
++from zoneinfo import ZoneInfo
+ from ix.models.sinister import Sinister
+ from ix.models.postalcodestatedistrict import PostalCodeStateDistrict
+ from sqlalchemy.orm import joinedload, with_loader_criteria
+@@ -27,6 +28,15 @@ ERROR_UNEXPECTED = "Error inesperado"
+ ERROR_NO_RESULTS = "Sin resultados"
+ ERROR_DUPLICATE = "Duplicado"
+ ERROR_INVALID = "Datos inválidos"
++ERROR_OPEN_TICKET = "Folio abierto"
++ERROR_RECENT_SINISTER = "Siniestro reciente"
++
++# Horas mínimas entre el reporte del siniestro a Chubb y la solicitud de Auto Relevo
++HORAS_MINIMAS_SINIESTRO = 48
++CHUBB_DATETIME_FORMAT = '%m/%d/%Y %I:%M:%S %p'
++MENSAJE_SINIESTRO_RECIENTE = (
++    "Para usar el servicio de Auto Relevo tu siniestro debe tener mínimo 48 horas de haber sido reportado ante Chubb."
++)
+ 
+ 
+ # Campos de vigencia de Chubb, confirmados en la busqueda por poliza y por siniestro (formato 12/Oct/2027).
+@@ -123,6 +133,33 @@ class AutoRelevoService:
+     def _first_value(data, keys):
+         return next((data[k] for k in keys if data.get(k)), None)
+ 
++    def _validar_antiguedad_siniestro(self, fecha_reporte, ahora=None):
++        """Rechaza (422) el siniestro con menos de HORAS_MINIMAS_SINIESTRO desde su reporte a Chubb.
++        Si Chubb no informa la fecha o no se puede interpretar, no se bloquea (queda en el log)."""
++        if not fecha_reporte:
++            logging.warning("Chubb no informó la fecha de reporte del siniestro; no se valida la antigüedad.")
++            return
++        try:
++            reportado = datetime.strptime(str(fecha_reporte).strip(), CHUBB_DATETIME_FORMAT)
++        except ValueError:
++            logging.warning(f"Fecha de reporte con formato no reconocido: {fecha_reporte}")
++            return
++        # Chubb informa hora local de México
++        ahora = ahora or datetime.now(ZoneInfo("America/Mexico_City")).replace(tzinfo=None)
++        if ahora - reportado < timedelta(hours=HORAS_MINIMAS_SINIESTRO):
++            self._handle_error(MENSAJE_SINIESTRO_RECIENTE, ERROR_RECENT_SINISTER, 422, rollback=False)
++
++    def _validar_antiguedad_desde_chubb(self, siniestro, poliza, token):
++        """Para siniestros que ya están en la BD de K2 (sin fecha de reporte): la consulta a Chubb y valida."""
++        try:
++            response = self._fetch_chubb(siniestro, poliza, token)
++            data = (response.json() if hasattr(response, "json") else response).get("Data") or [{}]
++            fecha_reporte = data[0].get("FechaReporteSiniestro")
++        except Exception as e:
++            logging.warning(f"No se pudo consultar la fecha de reporte del siniestro en Chubb: {e}")
++            return
++        self._validar_antiguedad_siniestro(fecha_reporte)
++
+     def search_sinister(self, siniestro=None, poliza=None, token=None, solo_venta=False):
+         """Busca siniestros por número o póliza.
+ 
+@@ -176,7 +213,10 @@ class AutoRelevoService:
+                             rollback=False,
+                         )
+ 
+-                    poliza_vencida = data_chubb[0].get('Estatus') == "VENCIDA"
++                    # Con siniestro no importa el estatus de la póliza; sin siniestro (avería mecánica) debe estar vigente
++                    poliza_vencida = data_chubb[0].get('Estatus') == "VENCIDA" and not siniestro
++                    if siniestro:
++                        self._validar_antiguedad_siniestro(data_chubb[0].get("FechaReporteSiniestro"))
+                     if poliza_vencida:
+                         self._handle_error("La póliza se encuentra vencida", ERROR_NOT_FOUND, 404, rollback=False)
+                     else:
+@@ -185,24 +225,31 @@ class AutoRelevoService:
+                         "detail": "El siniestro y/o póliza han sido encontrados."
+                         }
+                     
++            if siniestro and not solo_venta:
++                self._validar_antiguedad_desde_chubb(siniestro, poliza, token)
+             return {
+                 "data": self.serialize_model_object(results),
+                 "detail": "El siniestro y/o póliza han sido encontrados."
+             }
++        except errors.ApiError:
++            raise
+         except SQLAlchemyError as e:
+             self._handle_error(str(e), ERROR_BD, 500)
+-  
++
+         except Exception as e:
+             self._handle_error(f"Error en poliza: {str(e)}", ERROR_INVALID, 403)
+ 
+     def list_tickets(self, ticket_id=None, sinister_chubb_id=None, tipo_servicio_id=None, page=1, limit=10,
+-                     estatus_servicio=None, policy=None, order="asc", generic_filter=None):
+-        """Lista tickets con filtros y paginación."""
+-        
++                     estatus_servicio=None, policy=None, order="asc", generic_filter=None,
++                     solo_abiertos=False):
++        """Lista tickets con filtros y paginación. `solo_abiertos` excluye Finalizado, Cancelado y No autorizado."""
++
+         try:
+             query = g.s().query(ServicioAutoRelevo)
+             query = self._apply_filters(query, ticket_id, sinister_chubb_id, tipo_servicio_id,
+                                       estatus_servicio, policy, generic_filter)
++            if solo_abiertos:
++                query = self._filter_open(query)
+             query = query.options(
+                 joinedload(ServicioAutoRelevo.documentos_validacion)
+                     .joinedload(DocumentoValidacion.documento_requerido)
+@@ -255,15 +302,32 @@ class AutoRelevoService:
+         try:
+             # Validar que al menos uno de los campos esté presente
+             sinister_chubb_id = payload.get("sinister_chubb_id")
++            con_siniestro = bool(sinister_chubb_id)  # sin siniestro (avería mecánica) la póliza debe estar vigente
+             poliza = payload.get("poliza")
+             poliza_completa = poliza
+-            
++
+             if not sinister_chubb_id and not poliza:
+                 self._handle_error("Debe proporcionar 'sinister_chubb_id' o 'poliza'", ERROR_INVALID, 400, rollback=False)
+ 
+             partes = poliza.split('|') if poliza else []
+             numero_poliza = partes[1] if len(partes) > 1 else None
+ 
++            # Un folio abierto por póliza: si ya existe, se informa (409) en lugar de crear un duplicado
++            if poliza:
++                prefijo_poliza, numero_abierto, _ = self._parse_policy_parts(poliza)
++                abierto = self._find_open_ticket(prefijo_poliza, numero_abierto)
++                if abierto:
++                    boleta_abierta = abierto.boleta_informativa
++                    raise errors.ApiError({
++                        "data": [{
++                            "ticket_id": abierto.id,
++                            "folio_servicio": boleta_abierta.folio_servicio if boleta_abierta else None,
++                            "estatus_servicio": abierto.estatus_servicio,
++                        }],
++                        "detail": f"La póliza {poliza} ya tiene un folio de auto relevo abierto",
++                        "error": ERROR_OPEN_TICKET
++                    }, 409)
++
+             # Sin siniestro (avería mecánica) el folio se arma con la venta de la póliza, como en K2
+             search_result = self.search_sinister(sinister_chubb_id, poliza, token, solo_venta=not sinister_chubb_id)
+             sinister_data = search_result["data"][0]
+@@ -293,9 +357,10 @@ class AutoRelevoService:
+             vigencia_inicio, vigencia_fin = self._get_vigencia(sinister_data, sinister_chubb_id, poliza_completa, token)
+             events_count = events_manager.validate_and_get_count(
+                 sinister_data.get("policy_key"), poliza, str(sinister_data.get("policy_incised") or ""),
+-                vigencia_inicio, vigencia_fin, payload.get("dias_solicitados")
++                vigencia_inicio, vigencia_fin, payload.get("dias_solicitados"),
++                permitir_vigencia_vencida=con_siniestro
+             )
+-        
++
+             data_manager = AutoRelevoDataManager(g.s())
+             autorelevo_sinister = data_manager.create_autorelevo_sinister(sinister_data, parsed_payload)
+             events_manager.reserve(events_count, autorelevo_sinister.id, payload.get("dias_solicitados") or 0)
+@@ -367,6 +432,9 @@ class AutoRelevoService:
+                 VehiculoAsignado.active_record == True
+             ).scalar()
+             events_manager.finish(servicio.siniestro_id, int(dias_reales) if dias_reales is not None else None)
++        elif estatus in (EstatusServicioEnum.CANCELADO.value, EstatusServicioEnum.NO_AUTORIZADO.value):
++            # Folio cerrado sin uso: libera la póliza y devuelve los días reservados
++            events_manager.release(servicio.siniestro_id)
+ 
+     def update_ticket_status(self, ticket_id, payload):
+         """Actualiza el estado de un ticket."""
+@@ -969,17 +1037,29 @@ class AutoRelevoService:
+         return query
+ 
+     def _filter_by_policy(self, query, policy):
+-        """Filtra por póliza."""
+-        desgloce_poliza=policy.split('|')
+-        sufijo_poliza=desgloce_poliza[0]
+-        numero_poliza=desgloce_poliza[1]
+-        
++        """Filtra por póliza (PREFIJO|NUMERO). Responde 400 si el formato es inválido."""
++        sufijo_poliza, numero_poliza, _ = self._parse_policy_parts(policy)
+ 
+         return query.join(ServicioAutoRelevo.siniestro).filter(
+             AutorelevoSinister.prefijo == sufijo_poliza,
+             AutorelevoSinister.poliza == numero_poliza
+         )
+ 
++    def _filter_open(self, query):
++        """Deja solo tickets abiertos: activos y fuera de ESTATUS_SIN_RECALCULO (Finalizado, Cancelado, No autorizado)."""
++        return query.filter(
++            ServicioAutoRelevo.active_record == True,
++            ServicioAutoRelevo.estatus_servicio.notin_(ESTATUS_SIN_RECALCULO)
++        )
++
++    def _find_open_ticket(self, prefijo, numero_poliza):
++        """Devuelve el ticket abierto más reciente de la póliza, o None."""
++        query = g.s().query(ServicioAutoRelevo).join(ServicioAutoRelevo.siniestro).filter(
++            AutorelevoSinister.prefijo == prefijo,
++            AutorelevoSinister.poliza == numero_poliza
++        )
++        return self._filter_open(query).order_by(ServicioAutoRelevo.id.desc()).first()
++
+     def _filter_by_generic(self, query, generic_filter):
+         """Filtra por filtro genérico."""
+         desgloce_poliza=generic_filter.split('|')
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_events_manager.py b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_events_manager.py
+index 0bdec29f..f39ddf4b 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_events_manager.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_events_manager.py
+@@ -57,15 +57,17 @@ class AutoRelevoEventsManager:
+         count.eventos_restantes = count.eventos_total - count.eventos_usados
+         count.audit_updated_by = g.current_user.id
+ 
+-    def validate_and_get_count(self, prefijo, poliza, inciso, vigencia_inicio, vigencia_fin, dias):
++    def validate_and_get_count(self, prefijo, poliza, inciso, vigencia_inicio, vigencia_fin, dias,
++                               permitir_vigencia_vencida=False):
+         """Valida vigencia y eventos disponibles. Crea el conteo si es la primera vez en la vigencia.
+ 
+         `dias` es opcional: el micrositio no los conoce al crear el folio; se toman de las
+         fechas de la reservación vía `settle`.
++        `permitir_vigencia_vencida` (servicios con siniestro) no rechaza la póliza con vigencia terminada.
+         """
+         if not vigencia_fin:
+             self._error("No se pudo determinar la vigencia de la póliza para validar los eventos de AutoRelevo.")
+-        if vigencia_fin < date.today():
++        if vigencia_fin < date.today() and not permitir_vigencia_vencida:
+             self._error(f"La vigencia de la póliza terminó el {vigencia_fin.strftime('%d/%m/%Y')}, no se puede generar el folio.")
+         if dias is not None and (not isinstance(dias, int) or isinstance(dias, bool) or dias < 1):
+             self._error("Debe indicar los días de renta del vehículo (mínimo 1).")
+@@ -170,3 +172,20 @@ class AutoRelevoEventsManager:
+         event.status_eventos = EstatusEventoEnum.FINALIZADO
+         event.audit_updated_by = g.current_user.id
+         return event
++
++    def release(self, autorelevo_sinister_id):
++        """Cierra el evento de un folio Cancelado o No autorizado y libera la póliza para otro folio.
++        Si solo estaba reservado, devuelve los días al conteo; si ya estaba en curso (vehículo entregado),
++        los días se consideran usados y el evento se cierra como finalizado."""
++        event = self._active_event(autorelevo_sinister_id)
++        if not event:
++            return None
++        if event.status_eventos == EstatusEventoEnum.RESERVADO:
++            count = self.session.query(AutorelevoEventsCount).get(event.events_count_id)
++            count.eventos_usados -= event.numero_eventos
++            self._recalculate(count)
++            event.status_eventos = EstatusEventoEnum.CANCELADO
++        else:
++            event.status_eventos = EstatusEventoEnum.FINALIZADO
++        event.audit_updated_by = g.current_user.id
++        return event
+diff --git a/apiserver/ix/tests/auto_relevo/__init__.py b/apiserver/ix/tests/auto_relevo/__init__.py
+new file mode 100644
+index 00000000..e69de29b
+diff --git a/apiserver/ix/tests/auto_relevo/test_tickets_abiertos.py b/apiserver/ix/tests/auto_relevo/test_tickets_abiertos.py
+new file mode 100644
+index 00000000..68ff7183
+--- /dev/null
++++ b/apiserver/ix/tests/auto_relevo/test_tickets_abiertos.py
+@@ -0,0 +1,159 @@
++"""Folio abierto por póliza: filtro `abierto`, validación de formato, bloqueo 409 y liberación del evento."""
++from types import SimpleNamespace
++from unittest.mock import MagicMock, patch
++
++import pytest
++from sqlalchemy.orm import Query
++
++from ix.api import errors
++from ix.boletas_informativas.auto_relevo.api.auto_relevo_boleta.auto_relevo_boleta_models import (
++    EstatusEventoEnum, ServicioAutoRelevo)
++from ix.boletas_informativas.auto_relevo.api.auto_relevo_boleta.auto_relevo_boleta_service import (
++    AutoRelevoService, ERROR_OPEN_TICKET)
++from ix.boletas_informativas.auto_relevo.api.auto_relevo_boleta.auto_relevo_events_manager import (
++    AutoRelevoEventsManager)
++from ix.boletas_informativas.auto_relevo.api.utils.constants import ESTATUS_SIN_RECALCULO
++
++
++def _error_code(exc_info):
++    return exc_info.value.args[1] if len(exc_info.value.args) > 1 else exc_info.value.error_code
++
++
++def test_filtro_abierto_excluye_estatus_cerrados():
++    query = AutoRelevoService()._filter_open(Query([ServicioAutoRelevo]))
++    sql = str(query.statement.compile(compile_kwargs={"literal_binds": True}))
++    assert "NOT IN" in sql
++    for estatus in ("Finalizado", "Cancelado", "No autorizado"):
++        assert estatus in sql
++    assert "active_record" in sql
++    assert ESTATUS_SIN_RECALCULO == {"Finalizado", "Cancelado", "No autorizado"}
++
++
++@pytest.mark.parametrize("poliza", ["12345", "|12345", "CE|", ""])
++def test_poliza_sin_formato_valido_responde_400(poliza):
++    with pytest.raises(errors.ApiError) as exc:
++        AutoRelevoService()._filter_by_policy(Query([ServicioAutoRelevo]), poliza)
++    assert _error_code(exc) == 400
++
++
++def test_crear_ticket_con_folio_abierto_responde_409():
++    abierto = SimpleNamespace(id=648, estatus_servicio="Autorizado",
++                              boleta_informativa=SimpleNamespace(folio_servicio="AR-2026-00648"))
++    service = AutoRelevoService()
++    with patch.object(AutoRelevoService, "_find_open_ticket", return_value=abierto) as buscar, \
++            patch.object(AutoRelevoService, "search_sinister") as search:
++        with pytest.raises(errors.ApiError) as exc:
++            service.create_ticket({"poliza": "CE|50001692"}, "token")
++    buscar.assert_called_once_with("CE", "50001692")
++    search.assert_not_called()  # no se consulta a Chubb ni se crea nada
++    assert _error_code(exc) == 409
++    cuerpo = exc.value.args[0]
++    assert cuerpo["error"] == ERROR_OPEN_TICKET
++    assert cuerpo["data"][0] == {"ticket_id": 648, "folio_servicio": "AR-2026-00648",
++                                 "estatus_servicio": "Autorizado"}
++
++
++def test_crear_ticket_sin_folio_abierto_continua_el_flujo():
++    service = AutoRelevoService()
++    with patch.object(AutoRelevoService, "_find_open_ticket", return_value=None), \
++            patch.object(AutoRelevoService, "search_sinister", side_effect=RuntimeError("siguió")) as search:
++        with pytest.raises(RuntimeError, match="siguió"):
++            service.create_ticket({"poliza": "CE|50001692"}, "token")
++    search.assert_called_once()
++
++
++def _manager_con_evento(status, dias=5, usados=5):
++    event = SimpleNamespace(status_eventos=status, numero_eventos=dias, events_count_id=1, audit_updated_by=None)
++    count = SimpleNamespace(eventos_usados=usados, eventos_total=15, eventos_restantes=15 - usados, audit_updated_by=None)
++    session = MagicMock()
++    session.query.return_value.get.return_value = count
++    manager = AutoRelevoEventsManager(session)
++    return manager, event, count
++
++
++@pytest.mark.parametrize("estatus", ["Cancelado", "No autorizado"])
++def test_folio_cancelado_o_no_autorizado_libera_evento(estatus):
++    servicio = SimpleNamespace(estatus_servicio=estatus, siniestro_id=7)
++    with patch("ix.boletas_informativas.auto_relevo.api.auto_relevo_boleta.auto_relevo_boleta_service."
++               "AutoRelevoEventsManager") as manager_cls:
++        AutoRelevoService()._sync_event_status(servicio)
++    manager_cls.return_value.release.assert_called_once_with(7)
++
++
++def test_release_reservado_devuelve_dias_y_cancela_evento():
++    manager, event, count = _manager_con_evento(EstatusEventoEnum.RESERVADO, dias=5, usados=5)
++    with patch.object(AutoRelevoEventsManager, "_active_event", return_value=event), \
++            patch("ix.boletas_informativas.auto_relevo.api.auto_relevo_boleta.auto_relevo_events_manager.g",
++                  SimpleNamespace(current_user=SimpleNamespace(id=1))):
++        manager.release(7)
++    assert event.status_eventos == EstatusEventoEnum.CANCELADO
++    assert count.eventos_usados == 0
++    assert count.eventos_restantes == 15
++
++
++def test_release_en_curso_cierra_sin_devolver_dias():
++    manager, event, count = _manager_con_evento(EstatusEventoEnum.EN_CURSO, dias=5, usados=5)
++    with patch.object(AutoRelevoEventsManager, "_active_event", return_value=event), \
++            patch("ix.boletas_informativas.auto_relevo.api.auto_relevo_boleta.auto_relevo_events_manager.g",
++                  SimpleNamespace(current_user=SimpleNamespace(id=1))):
++        manager.release(7)
++    assert event.status_eventos == EstatusEventoEnum.FINALIZADO
++    assert count.eventos_usados == 5
++
++
++def test_release_sin_evento_activo_no_hace_nada():
++    manager, _, _ = _manager_con_evento(EstatusEventoEnum.RESERVADO)
++    with patch.object(AutoRelevoEventsManager, "_active_event", return_value=None):
++        assert manager.release(7) is None
++
++
++# ── Validación de antigüedad del siniestro (48 h) y vigencia con siniestro ─────────────────────────────
++
++from datetime import date, datetime, timedelta  # noqa: E402
++
++
++def _fecha_chubb(dt):
++    return dt.strftime('%m/%d/%Y %I:%M:%S %p')
++
++
++AHORA = datetime(2026, 11, 9, 12, 0, 0)
++
++
++def test_siniestro_con_menos_de_48_horas_responde_422():
++    reportado = AHORA - timedelta(hours=47, minutes=59)
++    with pytest.raises(errors.ApiError) as exc:
++        AutoRelevoService()._validar_antiguedad_siniestro(_fecha_chubb(reportado), ahora=AHORA)
++    assert _error_code(exc) == 422
++    assert "48 horas" in exc.value.args[0]["detail"]
++
++
++@pytest.mark.parametrize("horas", [48, 49, 500])
++def test_siniestro_con_48_horas_o_mas_pasa(horas):
++    reportado = AHORA - timedelta(hours=horas)
++    AutoRelevoService()._validar_antiguedad_siniestro(_fecha_chubb(reportado), ahora=AHORA)
++
++
++@pytest.mark.parametrize("fecha", [None, "", "no es fecha", "2026-11-09"])
++def test_sin_fecha_de_reporte_utilizable_no_bloquea(fecha):
++    AutoRelevoService()._validar_antiguedad_siniestro(fecha, ahora=AHORA)
++
++
++def _validar_con_vigencia_terminada(permitir):
++    manager = AutoRelevoEventsManager(MagicMock())
++    count = SimpleNamespace(id=1, eventos_restantes=10)
++    manager.session.query.return_value.filter.return_value.first.return_value = None  # sin evento activo
++    ayer = date.today() - timedelta(days=1)
++    with patch.object(AutoRelevoEventsManager, "_find_count", return_value=count):
++        return manager.validate_and_get_count(
++            "CE", "50001692", "1", ayer - timedelta(days=365), ayer, 3, permitir_vigencia_vencida=permitir)
++
++
++def test_vigencia_terminada_se_rechaza_sin_siniestro():
++    with pytest.raises(errors.ApiError) as exc:
++        _validar_con_vigencia_terminada(permitir=False)
++    assert _error_code(exc) == 400
++    assert "vigencia de la póliza terminó" in exc.value.args[0]["detail"]
++
++
++def test_vigencia_terminada_se_permite_con_siniestro():
++    assert _validar_con_vigencia_terminada(permitir=True).eventos_restantes == 10
+-- 
+2.56.1
+
+
+From b0e86b893e4046be85e78eab0c910b878a95aa69 Mon Sep 17 00:00:00 2001
+From: JoshMorinDev <joshua.morinsalazar@chubb.com>
+Date: Tue, 10 Nov 2026 14:11:21 -0600
+Subject: [PATCH 6/9] feat(autorelevo): hacer configurable la validacion de 48
+ horas del siniestro
+
+AUTORELEVO_MIN_HORAS_SINIESTRO define las horas minimas entre el reporte y la
+solicitud; 0 la desactiva. Dev queda en 0, test y prod en 48. Con 0 no se
+consulta Chubb solo para la fecha de reporte.
+---
+ apiserver/app.morfeo-dev-321917.yaml               |  1 +
+ apiserver/app.morfeo-prod.yaml                     |  1 +
+ apiserver/app.morfeo-test.yaml                     |  1 +
+ .../auto_relevo_boleta_service.py                  | 14 ++++++++++++--
+ apiserver/ix/config/baseconfig.py                  |  2 ++
+ 5 files changed, 17 insertions(+), 2 deletions(-)
+
+diff --git a/apiserver/app.morfeo-dev-321917.yaml b/apiserver/app.morfeo-dev-321917.yaml
+index fd0bce5c..3fe49b29 100644
+--- a/apiserver/app.morfeo-dev-321917.yaml
++++ b/apiserver/app.morfeo-dev-321917.yaml
+@@ -126,6 +126,7 @@ env_variables:
+   BUCKET_AUTORELEVO: 'reportes_boletainformativa'
+   BUCKET_AUTORELEVO_DOCUMENTS: 'autorelevo_documents_dev'
+   AUTORELEVO_USER_ID_UPLOAD_DOC: '1785'
++  AUTORELEVO_MIN_HORAS_SINIESTRO: '0'
+   BUCKET_REIMBURSEMENT: 'reimbursement_documents_dev'
+   MAX_FILE_SIZE_REIMBURSEMENT_CLIENT_DOCUMENT: '10485760'
+ 
+diff --git a/apiserver/app.morfeo-prod.yaml b/apiserver/app.morfeo-prod.yaml
+index beed8d2f..b7cc37bc 100644
+--- a/apiserver/app.morfeo-prod.yaml
++++ b/apiserver/app.morfeo-prod.yaml
+@@ -134,6 +134,7 @@ env_variables:
+   BUCKET_AUTORELEVO: 'reportes_boletainformativa_prod'
+   BUCKET_AUTORELEVO_DOCUMENTS: 'autorelevo_documents_prod'
+   AUTORELEVO_USER_ID_UPLOAD_DOC: '3974'
++  AUTORELEVO_MIN_HORAS_SINIESTRO: '48'
+   BUCKET_REIMBURSEMENT: 'reimbursement_documents_prod'
+   MAX_FILE_SIZE_REIMBURSEMENT_CLIENT_DOCUMENT: '10485760'
+ 
+diff --git a/apiserver/app.morfeo-test.yaml b/apiserver/app.morfeo-test.yaml
+index d918d9d2..816fccc6 100644
+--- a/apiserver/app.morfeo-test.yaml
++++ b/apiserver/app.morfeo-test.yaml
+@@ -125,6 +125,7 @@ env_variables:
+   BUCKET_AUTORELEVO: 'reportes_boletainformativa_test'
+   BUCKET_AUTORELEVO_DOCUMENTS: 'autorelevo_documents_test'
+   AUTORELEVO_USER_ID_UPLOAD_DOC: '3974'
++  AUTORELEVO_MIN_HORAS_SINIESTRO: '48'
+   BUCKET_REIMBURSEMENT: 'reimbursement_documents_test'
+   MAX_FILE_SIZE_REIMBURSEMENT_CLIENT_DOCUMENT: '10485760'
+ 
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
+index a4f01c7b..847934eb 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
+@@ -133,9 +133,17 @@ class AutoRelevoService:
+     def _first_value(data, keys):
+         return next((data[k] for k in keys if data.get(k)), None)
+ 
++    @staticmethod
++    def _horas_minimas_siniestro():
++        """Horas mínimas configuradas para la antigüedad del siniestro; 0 desactiva la validación."""
++        return int(getattr(config, "AUTORELEVO_MIN_HORAS_SINIESTRO", HORAS_MINIMAS_SINIESTRO) or 0)
++
+     def _validar_antiguedad_siniestro(self, fecha_reporte, ahora=None):
+-        """Rechaza (422) el siniestro con menos de HORAS_MINIMAS_SINIESTRO desde su reporte a Chubb.
++        """Rechaza (422) el siniestro con menos de las horas mínimas desde su reporte a Chubb.
+         Si Chubb no informa la fecha o no se puede interpretar, no se bloquea (queda en el log)."""
++        horas_minimas = self._horas_minimas_siniestro()
++        if horas_minimas <= 0:
++            return
+         if not fecha_reporte:
+             logging.warning("Chubb no informó la fecha de reporte del siniestro; no se valida la antigüedad.")
+             return
+@@ -146,11 +154,13 @@ class AutoRelevoService:
+             return
+         # Chubb informa hora local de México
+         ahora = ahora or datetime.now(ZoneInfo("America/Mexico_City")).replace(tzinfo=None)
+-        if ahora - reportado < timedelta(hours=HORAS_MINIMAS_SINIESTRO):
++        if ahora - reportado < timedelta(hours=horas_minimas):
+             self._handle_error(MENSAJE_SINIESTRO_RECIENTE, ERROR_RECENT_SINISTER, 422, rollback=False)
+ 
+     def _validar_antiguedad_desde_chubb(self, siniestro, poliza, token):
+         """Para siniestros que ya están en la BD de K2 (sin fecha de reporte): la consulta a Chubb y valida."""
++        if self._horas_minimas_siniestro() <= 0:
++            return
+         try:
+             response = self._fetch_chubb(siniestro, poliza, token)
+             data = (response.json() if hasattr(response, "json") else response).get("Data") or [{}]
+diff --git a/apiserver/ix/config/baseconfig.py b/apiserver/ix/config/baseconfig.py
+index df53d9c0..1d3243b1 100644
+--- a/apiserver/ix/config/baseconfig.py
++++ b/apiserver/ix/config/baseconfig.py
+@@ -59,6 +59,8 @@ class LocalConfig(object):
+     BUCKET_AUTORELEVO_DOCUMENTS = os.environ.get("BUCKET_AUTORELEVO_DOCUMENTS")
+     BUCKET_REIMBURSEMENT = os.environ.get("BUCKET_REIMBURSEMENT")
+     AUTORELEVO_USER_ID_UPLOAD_DOC = os.environ.get("AUTORELEVO_USER_ID_UPLOAD_DOC")
++    # Horas mínimas entre el reporte del siniestro y la solicitud de AutoRelevo; 0 desactiva la validación
++    AUTORELEVO_MIN_HORAS_SINIESTRO = int(os.environ.get("AUTORELEVO_MIN_HORAS_SINIESTRO") or 48)
+ 
+     DIVERZA_VALIDATE_URL = os.environ.get("DIVERZA_VALIDATE_URL")
+     DIVERZA_USER_ID = os.environ.get("DIVERZA_USER_ID")
+-- 
+2.56.1
+
+
+From b4c7c81b5b582b48a1e9b8052a37f61f24ea2cc5 Mon Sep 17 00:00:00 2001
+From: JoshMorinDev <joshua.morinsalazar@chubb.com>
+Date: Tue, 10 Nov 2026 16:56:11 -0600
+Subject: [PATCH 7/9] fix(autorelevo): mostrar el motivo de la boleta desde el
+ catalogo
+
+El listado y el detalle del admin muestran el motivo a partir de
+motivo_activacion_servicio, que solo se llena cuando el operador guarda el
+motivo en el formulario. Los folios recien creados desde el micrositio salian
+como "No seleccionado" aunque el ticket trae motivo_servicio_id.
+
+Se expone la relacion BoletaInformativa.motivo_servicio (joined) y se agrega
+MotivoServicio a related_models para que serialize_servicio devuelva id y
+nombre; el admin usa ese nombre como respaldo cuando el texto esta vacio.
+---
+ .../api/relevo/relevo_ticket_boleta_informativa.model.ts   | 6 ++++++
+ .../app/app-modules/relevo-car/list/list.component.html    | 7 +++++--
+ .../api/auto_relevo_boleta/auto_relevo_boleta_models.py    | 1 +
+ .../api/auto_relevo_boleta/auto_relevo_boleta_service.py   | 1 +
+ .../auto_relevo/api/utils/related_models.py                | 4 ++++
+ 5 files changed, 17 insertions(+), 2 deletions(-)
+
+diff --git a/admin/src/app/app-models/api/relevo/relevo_ticket_boleta_informativa.model.ts b/admin/src/app/app-models/api/relevo/relevo_ticket_boleta_informativa.model.ts
+index 6e831747..2a9a30fd 100644
+--- a/admin/src/app/app-models/api/relevo/relevo_ticket_boleta_informativa.model.ts
++++ b/admin/src/app/app-models/api/relevo/relevo_ticket_boleta_informativa.model.ts
+@@ -1,3 +1,8 @@
++export interface RelevoTicketMotivoServicioModel {
++    id: number;
++    nombre: string;
++}
++
+ export interface RelevoTicketBoletaInformativaModel  {
+     id: number;
+     siniestro_id: number;
+@@ -16,4 +21,5 @@ export interface RelevoTicketBoletaInformativaModel  {
+     motivo_activacion_servicio: string;
+     motivo_servicio_id: number;
+     plan_id: number;
++    MotivoServicio?: RelevoTicketMotivoServicioModel | null;
+ }
+\ No newline at end of file
+diff --git a/admin/src/app/app-modules/relevo-car/list/list.component.html b/admin/src/app/app-modules/relevo-car/list/list.component.html
+index c6297927..5c56b614 100644
+--- a/admin/src/app/app-modules/relevo-car/list/list.component.html
++++ b/admin/src/app/app-modules/relevo-car/list/list.component.html
+@@ -157,7 +157,9 @@
+                       <td>
+                         {{
+                           rowData.BoletaInformativa
+-                            ?.motivo_activacion_servicio || "No seleccionado"
++                            ?.motivo_activacion_servicio ||
++                            rowData.BoletaInformativa?.MotivoServicio?.nombre ||
++                            "No seleccionado"
+                         }}
+                       </td>
+                       <td>
+@@ -369,7 +371,8 @@
+             <strong
+               >[{{ detailTicket?.BoletaInformativa?.motivo_servicio_id }}]
+               {{
+-                detailTicket?.BoletaInformativa?.motivo_activacion_servicio
++                detailTicket?.BoletaInformativa?.motivo_activacion_servicio ||
++                  detailTicket?.BoletaInformativa?.MotivoServicio?.nombre
+               }}</strong
+             >
+           </div>
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_models.py b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_models.py
+index d5253440..a1cb6f7c 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_models.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_models.py
+@@ -62,6 +62,7 @@ class BoletaInformativa(database.Model, Base, AuditEntity):
+ 
+     vehiculos_asignados = relationship('VehiculoAsignado', backref='boleta_informativa', lazy=True)
+     servicios_auto_relevo = relationship('ServicioAutoRelevo', backref='boleta_informativa', lazy=True)
++    motivo_servicio = relationship('MotivoServicio', backref='boletas_informativas', lazy='joined')
+     
+     def soft_delete(self, deleted_by):
+         self.active_record = False
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
+index 847934eb..d0ef782c 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
+@@ -891,6 +891,7 @@ class AutoRelevoService:
+             "ServicioAutoRelevo": servicio,
+             "AutorelevoSinister": servicio.siniestro,
+             "BoletaInformativa": servicio.boleta_informativa,
++            "MotivoServicio": servicio.boleta_informativa.motivo_servicio if servicio.boleta_informativa else None,
+             "DatosTitular": servicio.datos_titular,
+             "UbicacionTitular": servicio.datos_titular.ubicaciones if servicio.datos_titular else [],
+             "VehiculoAsignado": servicio.boleta_informativa.vehiculos_asignados if servicio.boleta_informativa else [],
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/utils/related_models.py b/apiserver/ix/boletas_informativas/auto_relevo/api/utils/related_models.py
+index 5ec8178a..36c7cf15 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/utils/related_models.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/utils/related_models.py
+@@ -39,6 +39,10 @@ related_models = {
+         "motivo_servicio_id":True,
+         "plan_id": True
+     },
++    "MotivoServicio": {
++        "id": True,
++        "nombre": True
++    },
+     "DatosTitular": {
+         "id": True,
+         "nombre_completo": True,
+-- 
+2.56.1
+
+
+From b5b2e27ebea3b3232c5e148230efecefd985faff Mon Sep 17 00:00:00 2001
+From: JoshMorinDev <joshua.morinsalazar@chubb.com>
+Date: Thu, 5 Nov 2026 15:50:08 -0600
+Subject: [PATCH 8/9] =?UTF-8?q?chore(autorelevo):=20recuperar=20yaml=20de?=
+ =?UTF-8?q?=20la=20versi=C3=B3n=20micrositio-autorelevo=20desplegada=20en?=
+ =?UTF-8?q?=20morfeo-dev?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Versión default/micrositio-autorelevo del 2026-11-05, commit corporativo 4dbe0c9.
+---
+ apiserver/app.morfeo-dev-321917.yaml | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/apiserver/app.morfeo-dev-321917.yaml b/apiserver/app.morfeo-dev-321917.yaml
+index 3fe49b29..5ffb849a 100644
+--- a/apiserver/app.morfeo-dev-321917.yaml
++++ b/apiserver/app.morfeo-dev-321917.yaml
+@@ -200,4 +200,4 @@ env_variables:
+ #   OTP_TEST_PHONE: '5569132316'
+ #   OTP_TEST_EMAIL: 'Ian.Tellez@Chubb.com'
+ #   OTP_TEST_PHONE: '8711880933'
+-#   OTP_TEST_EMAIL: 'Ian.Tellez@Chubb.com'
+\ No newline at end of file
++#   OTP_TEST_EMAIL: 'Ian.Tellez@Chubb.com'
+-- 
+2.56.1
+
+
+From f0c8f2e9e803ca6db9ecdbd841dfe0a4dd38fff9 Mon Sep 17 00:00:00 2001
+From: JoshMorinDev <joshua.morinsalazar@chubb.com>
+Date: Fri, 13 Nov 2026 14:26:02 -0600
+Subject: [PATCH 9/9] feat(autorelevo): registrar en web_service_log el OTP
+ enviado por correo
+
+---
+ apiserver/ix/api/endpoints/autorelevo_auth.py | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
+
+diff --git a/apiserver/ix/api/endpoints/autorelevo_auth.py b/apiserver/ix/api/endpoints/autorelevo_auth.py
+index 9a3443ba..27f3947a 100644
+--- a/apiserver/ix/api/endpoints/autorelevo_auth.py
++++ b/apiserver/ix/api/endpoints/autorelevo_auth.py
+@@ -16,6 +16,7 @@ from flask import g
+ 
+ from ix.api import wrappers, webserviceerror
+ from ix.config import config
++from ix import models as m
+ from ix.tools.utils.redis_cache import redis_client
+ from ix.tools.services.autorelevo_policy import AutorelevoPolicyService
+ import ix.svc.general as gtools
+@@ -123,6 +124,24 @@ def _send_email(email: str, otp_code: str) -> None:
+         body=html,
+     )
+     print(f"[autorelevo] send_email to={_mask_email(email)} mailgun_response={str(response)[:120]!r}")
++    _log_email(email, otp_code, response)
++
++
++def _log_email(email: str, otp_code: str, response) -> None:
++    """Registra el OTP por correo en web_service_log con el mismo texto que SMS_TRANSACTION."""
++    try:
++        g.s().add(m.WebServiceLog(
++            name="EMAIL_TRANSACTION",
++            from_=config.WS_MORFEO,
++            to_="MAILGUN",
++            request_=json.dumps({"email": email, "text": "Tu codigo de verificacion Auto Relevo es: " + otp_code + ". Valido por 5 minutos."}),
++            response_=str(response)[:500],
++            datetime=datetime.datetime.now(),
++        ))
++        g.s().commit()
++    except Exception as exc:
++        g.s().rollback()
++        logger.error("autorelevo _log_email: %s", exc)
+ 
+ def _build_jwt(poliza: str, inciso: str) -> str:
+     now = datetime.datetime.utcnow()
+-- 
+2.56.1
+
