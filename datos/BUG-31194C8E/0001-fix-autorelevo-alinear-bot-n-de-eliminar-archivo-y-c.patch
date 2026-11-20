@@ -1,0 +1,70 @@
+From 1989f11e2841af39488b828b6a1d0bde1fa5d31b Mon Sep 17 00:00:00 2001
+From: JoshMorinDev <joshua.morinsalazar@chubb.com>
+Date: Fri, 20 Nov 2026 09:40:04 -0600
+Subject: [PATCH] =?UTF-8?q?fix(autorelevo):=20alinear=20bot=C3=B3n=20de=20?=
+ =?UTF-8?q?eliminar=20archivo=20y=20conservar=20el=20=C3=ADcono=20en=20hov?=
+ =?UTF-8?q?er?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ .../file-upload-row.component.ts              | 22 +++++++++++++++----
+ 1 file changed, 18 insertions(+), 4 deletions(-)
+
+diff --git a/autorelevo/src/app/shared/components/file-upload-row/file-upload-row.component.ts b/autorelevo/src/app/shared/components/file-upload-row/file-upload-row.component.ts
+index 4c7b452..d3b69af 100644
+--- a/autorelevo/src/app/shared/components/file-upload-row/file-upload-row.component.ts
++++ b/autorelevo/src/app/shared/components/file-upload-row/file-upload-row.component.ts
+@@ -1,14 +1,13 @@
+ import { Component, Input, Output, EventEmitter, signal } from '@angular/core';
+ import { NgClass } from '@angular/common';
+ import { CbIconComponent } from '@chubb/ui-components/cb-icon';
+-import { CbButtonDirective } from '@chubb/ui-components/cb-button';
+ import { DocumentoRequerido } from '../../../core/models';
+ import { FORMATOS_PERMITIDOS, TAMANO_MAXIMO_MB } from '../../constants';
+ 
+ @Component({
+   selector: 'app-file-upload-row',
+   standalone: true,
+-  imports: [NgClass, CbIconComponent, CbButtonDirective],
++  imports: [NgClass, CbIconComponent],
+   template: `
+     <div
+       class="ar-file-row"
+@@ -39,8 +38,8 @@ import { FORMATOS_PERMITIDOS, TAMANO_MAXIMO_MB } from '../../constants';
+         <div class="ar-file-actions">
+           <cb-icon iconKey="utility-success-check-fill" iconSize="small" iconColor="success-saturated"></cb-icon>
+           <button
+-            cbButton
+-            [variant]="'ghost'"
++            type="button"
++            class="ar-file-remove"
+             aria-label="Eliminar archivo"
+             (click)="onRemove($event)"
+           ><cb-icon iconKey="utility-close" iconSize="small"></cb-icon></button>
+@@ -91,6 +90,21 @@ import { FORMATOS_PERMITIDOS, TAMANO_MAXIMO_MB } from '../../constants';
+     .ar-file-error { font-size: 12px; color: var(--c-error); margin-top: 2px; }
+ 
+     .ar-file-actions { display: flex; align-items: center; gap: 8px; }
++    .ar-file-remove {
++      display: inline-flex;
++      align-items: center;
++      justify-content: center;
++      width: 28px;
++      height: 28px;
++      padding: 0;
++      background: none;
++      border: none;
++      border-radius: 50%;
++      color: var(--c-muted);
++      cursor: pointer;
++    }
++    .ar-file-remove:hover,
++    .ar-file-remove:focus-visible { color: var(--c-text); background: var(--c-secondary-light); }
+ 
+     .ar-file-input {
+       position: absolute;
+-- 
+2.56.1
+
