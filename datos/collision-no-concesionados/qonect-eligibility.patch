@@ -1,0 +1,98 @@
+diff --git a/apiserver/ix/apps/ahio/qonect_eligibility.py b/apiserver/ix/apps/ahio/qonect_eligibility.py
+index 7ca4212..90ca337 100644
+--- a/apiserver/ix/apps/ahio/qonect_eligibility.py
++++ b/apiserver/ix/apps/ahio/qonect_eligibility.py
+@@ -1,5 +1,7 @@
+ """Decide si un caso puede asignarse automático por Qonect."""
+ 
++import logging
++
+ from flask import g
+ 
+ from ix.apps.ahio.collision_eligibility import is_collision_case_eligible
+@@ -32,8 +34,9 @@ def is_eligible_for_automatic_qonect(data: dict, case) -> bool:
+         return False
+ 
+     if service_id == SERVICE_TRUCK_COLLISION:
+-        eligible, _reason = is_collision_case_eligible(data, case)
++        eligible, reason = is_collision_case_eligible(data, case)
+         if not eligible:
++            logging.info("Caso %s no elegible para Qonect: %s", getattr(case, "case_id", None), reason)
+             return False
+ 
+     # En colisión los chatbots también pasan por el cuestionario (maniobra especial).
+diff --git a/apiserver/ix/svc/assistanceticket.py b/apiserver/ix/svc/assistanceticket.py
+index 23bae2a..d4ab6f6 100644
+--- a/apiserver/ix/svc/assistanceticket.py
++++ b/apiserver/ix/svc/assistanceticket.py
+@@ -9,13 +9,10 @@ from ix.apps.ahio.queries import get_ahio_service_id
+ from ix.apps.ahio.factory import AHIOFactory
+ from ix.apps.ahio.strategies import AhioStrategyCode
+ from ix.apps.ahio.utils import automatic_close_ahio_case_canceled, call_cancel_ahio_service
+-from ix.apps.ahio.questionnaire_validations import validate_qonect_questionnaire
+-from ix.apps.ahio.qonect_sponsor_consistency import validate_qonect_sponsor_consistency
++from ix.apps.ahio.qonect_eligibility import is_eligible_for_automatic_qonect
+ from ix.apps.ahio.variables import (
+-    QONECT_ALLOWED_SERVICE_IDS,
+     is_state_allowed,
+     is_state_district_allowed,
+-    CHATBOTS,
+ )
+ from ix.api.endpoints.typologies_crm import get_typologys
+ from ix import models as m
+@@ -53,7 +50,7 @@ from ix.tools.definitions.user import USER_CSS, USER_SRL_VOICEBOT_NAME, USER_TEL
+ from ix.tools.definitions.global_definitions import (NOT_DEFINED, PLATE, COLOR, LABEL_COLOR_COMMENT, 
+                                                      LABEL_PLATE_COMMENT, SPONSOR_NAME_CHUBB, SMS_SERVICE_NAME, 
+                                                      SMS_TEXT_NEW_CRANE_CASE, SMS_TEXT_NEW_ASSISTANCE_CASE, NICKNAME_TWILIO_LBL)
+-from ix.tools.utils.functions import get_sponsor_name_by_plan_id, get_sponsor_by_plan_id, sinister_sms_text
++from ix.tools.utils.functions import get_sponsor_name_by_plan_id, sinister_sms_text
+ from ix.tools.utils.redis_dispatcher_queue import dispatcher_queue
+ from ix.svc.assignament_dispatchers import REDISTRIBUTION_CATEGORIES, sync_case_redistribution_queue, enqueue_case_for_redistribution
+ from ix.models.assistancecase import AssistanceCase
+@@ -678,37 +675,6 @@ def send_sms_for_new_assistance_case(sponsor_name: str, case_phone: str, country
+         gtools.send_sms(data_first_sms)
+ 
+ 
+-def validate_send_qonect(data, case):
+-    programmed = data.get("programmed")
+-    manual_assignation = data.get("trigger")
+-    service_id = data.get("service_id")
+-
+-    if (
+-        programmed == 1
+-        or manual_assignation
+-        or data.get("addReimbursementServiceTicket")
+-        or service_id not in QONECT_ALLOWED_SERVICE_IDS
+-    ):
+-        return False
+-
+-    sponsor = get_sponsor_by_plan_id(case.assistance_plan_id)
+-    if not sponsor or not sponsor.send_to_qonect:
+-        return False
+-
+-    if not validate_qonect_sponsor_consistency(sponsor, data):
+-        return False
+-
+-    current_user = g.current_user
+-    if current_user.email in CHATBOTS:
+-        return True
+-
+-    return validate_qonect_questionnaire(
+-        service_id=service_id,
+-        comment=data.get("comment", ""),
+-        data=data,
+-    )
+-
+-
+ def _build_geocercas_payload(case, main_ticket, session):
+     """
+     Construye el payload para Geocercas desde el thread principal (objetos ORM ya cargados).
+@@ -1399,7 +1365,7 @@ Saludos"""
+         result_ahio = False
+         if (is_state_allowed(case.state_id) 
+             and is_state_district_allowed(case.state_district_id) 
+-            and validate_send_qonect(data, case)):
++            and is_eligible_for_automatic_qonect(data, case)):
+ 
+             # Pre-construir el payload de Geocercas antes de lanzar el worker.
+             # Si AHIO rechaza o falla, el worker lo usa como fallback en lugar de
