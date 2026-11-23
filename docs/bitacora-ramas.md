@@ -5,3 +5,4 @@ Formato: `- [ ] AAAA-MM-DD · repo · rama · stash@{n} | hash · pendiente` →
 
 - [x] 2026-11-13 · todos · — · — · se eliminaron los worktrees `OPUS-edicion`, `OPUS-pretest`, `cachyos-migration-transcripcion` (limpios; sus ramas siguen en el repo principal) y la entrada huérfana `K2-Full-Portal-shortlink`.
 - [ ] 2026-11-13 · K2-Full-Portal · feat/collision-no-concesionados → CDSEBAU-57-Autorelevo-integrado · — (rama limpia, sin stash) · integrado autorelevo, push a origin (personal) 13 nov
+- [ ] 2026-11-20 · K2-Full-Portal · feat/collision-no-concesionados · merge de origin/dev cerrado en commit local 6ca09fe8 (sin push) · cambio a CDSEBAU-57-Autorelevo-integrado para correo de servicio autorizado

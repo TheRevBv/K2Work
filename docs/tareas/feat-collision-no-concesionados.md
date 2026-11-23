@@ -56,3 +56,19 @@ Si `origin/dev` avanzó y `git am` choca: `git am --show-current-patch=diff`, re
 - Corrección (13-nov): la causa completa era un `.env` incluido en el bundle de blip. `load_secrets` no sobreescribe variables que ya existen, así que `REDIS_HOST` se quedaba local (el log decía `10 cargados, 77 ya existían`). Con el redeploy sin `.env` el log dice `87 cargados, 0 ya existían`.
 - Prueba en blip: caso 67994 (siniestro MA25K004002, bien 1). Llegó a Qonect (`servicio-propuesto` 200). Respuesta: "No existen gruas que cumplan con el tiempo de calidad establecido". 67993 se creó antes del fix y falló por Redis.
 - Prueba del fix 0009 en blip (deploy 16:49 UTC; el log dice `87 cargados, 0 ya existían`): caso 67995 (KA26H000489, bien 1) por WhatsApp con carga "Sí". No se lanzó el worker AHIO, así que el caso queda para asignación manual, que es lo correcto.
+
+## 19-nov: caso 68034 no viajó a Qonect (blip)
+- Pasó la elegibilidad y se lanzó el worker AHIO (15:34:48 UTC). Falló al pedir el token: `Redis 127.0.0.1:6379 connection refused`.
+- Causa: igual que el 13-nov. El deploy volvió a subir `apiserver/.env` (log: `10 cargados, 77 ya existían`). `.gcloudignore` no excluye `.env`.
+- El fix de maniobra sí funcionó: con maniobra básica el caso salió a AHIO, no a asignación manual.
+- Confirmado: en la rama `CDSEBAU-6-feat-collision-no-concesionados` de la VDI, `apiserver/.gcloudignore` solo excluye `env/`, no `.env` (en `CDSEBAU-57` sí lo excluye). `baseconfig.py` hace `load_dotenv()` y `load_secrets` no pisa variables que ya existen.
+- Redeploy de blip (16:01 UTC) con `.env` en `.gcloudignore`: `87 cargados, 0 ya existían`; Redis y token AHIO OK (caso 68038 asignado en AHIO, pero no era colisión no concesionado). Falta repetir la prueba de colisión con maniobra básica.
+
+## 20-nov: código desplegado en blip vs ramas
+
+- Versión `blip` (default, morfeo-dev, desplegada el 19-nov a las 16:01 UTC) se descarga con `gcloud app versions describe` + `sourceUrl` del bucket staging. `source-context.json` dice `revisionId 7c418a69`, commit que no existe en el repo local (salió de la VDI).
+- Archivos distintos, ignorando CRLF: contra `origin/feat/collision-no-concesionados` (67ad84ea), 148; contra `origin/dev`, 61; contra `snapshot/vdi-ahio-no-concesionados`, 40. La base más cercana es el snapshot de la VDI, no la rama remota.
+- Diferencias de colisión respecto al snapshot: `ahio/enums.py` se borra y `ManeuverType` sale de `ix.enums.maneuver_type`. En `whatsApp/services/collision.py` se quita `requiere_maniobra` y se agrega `_has_special_maneuver` (solo la maniobra especial obliga a manual). Las regex del cuestionario (frente, ubicación, carga) aceptan `?:` y respuesta vacía. Los docstrings largos se recortan.
+- Blip trae además cambios de reimbursements, mailgun y baseconfig que no están en el snapshot; vienen de dev o de otra rama de la VDI.
+- El bundle no incluye `.gcloudignore` ni `public_files`.
+- Merge de `origin/dev` (sin commit): los conflictos se resolvieron con la versión de blip. Eso revirtió `8fbff704` y las reglas de colisión dejaron de ejecutarse; blip tampoco las ejecuta. Manuel lo detectó en el review. Se volvió a aplicar `8fbff704`: `validate_send_qonect` se borra y `assistanceticket.py` llama a `is_eligible_for_automatic_qonect`. También se agrega un `logging.info` con el motivo cuando la regla de colisión bloquea. Pendiente: pytest en la VDI y redeploy de blip.
