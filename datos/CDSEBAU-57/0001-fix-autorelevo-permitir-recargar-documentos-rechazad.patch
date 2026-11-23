@@ -1,0 +1,30 @@
+From 91005644e7a3f8d2d8fc4551a4f9a48253e65b0f Mon Sep 17 00:00:00 2001
+From: JoshMorinDev <joshua.morinsalazar@chubb.com>
+Date: Mon, 23 Nov 2026 16:46:04 -0600
+Subject: [PATCH] =?UTF-8?q?fix(autorelevo):=20permitir=20recargar=20docume?=
+ =?UTF-8?q?ntos=20rechazados=20desde=20la=20liga=20p=C3=BAblica?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ .../auto_relevo/api/auto_relevo_boleta/upload_file_manager.py  | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/upload_file_manager.py b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/upload_file_manager.py
+index 41931af6..67f6fee9 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/upload_file_manager.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/upload_file_manager.py
+@@ -358,7 +358,8 @@ class AutoRelevoFilesService:
+                 estatus_archivo = "Pendiente"
+                 hash_id_documento = None
+             else:
+-                estatus_archivo = documento_archivo.estatus_archivo.name if documento_archivo else "Pendiente"
++                rechazado = documento_validacion.estatus_validacion == "Rechazado"
++                estatus_archivo = documento_archivo.estatus_archivo.name if documento_archivo and not rechazado else "Pendiente"
+                 hash_id_documento = documento_validacion.hash_id
+ 
+             resultado.append({
+-- 
+2.56.1
+

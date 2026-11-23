@@ -38,3 +38,11 @@ Autorizado sin preguntar (es local y reversible):
 2. Registrarlo en `K2Work/docs/bitacora-ramas.md` (una línea por cambio: fecha, repo, rama, `stash@{n}`/hash, qué quedó pendiente).
 3. `git switch` a la otra rama (o crearla desde `origin/dev`).
 4. Al volver: `git stash pop` o deshacer el `wip`, y marcar la línea de la bitácora como retomada.
+
+## Patch para la VDI
+
+Cuando el usuario pida un patch:
+1. `git format-patch -1 HEAD -o K2Work/datos/<ticket>/` (o `-N` para varios commits).
+2. En la respuesta, pegar **siempre el contenido raw** del `.patch` en un bloque ```diff```: el usuario lo copia a la VDI, no tiene acceso al archivo.
+3. Dar el comando para aplicarlo sin commit en la VDI (Windows):
+   `git apply --check <archivo>.patch` y luego `git apply --ignore-whitespace <archivo>.patch`; si no entra limpio, `git apply --3way`. Con commit: `git am`.
