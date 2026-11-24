@@ -1,0 +1,211 @@
+From 0229a1e7209a91c83b69f47b67b13eae8beb06c4 Mon Sep 17 00:00:00 2001
+From: JoshMorinDev <joshua.morinsalazar@chubb.com>
+Date: Tue, 24 Nov 2026 11:47:57 -0600
+Subject: [PATCH] fix(autorelevo): notificar al asegurado cuando su servicio no
+ es autorizado
+
+---
+ .../auto_relevo_boleta_service.py             |   8 +-
+ .../notifications_manager.py                  |  11 ++
+ .../autorelevo_servicio_no_autorizado.html    | 111 ++++++++++++++++++
+ .../test_aviso_servicio_autorizado.py         |  13 +-
+ 4 files changed, 140 insertions(+), 3 deletions(-)
+ create mode 100644 apiserver/ix/boletas_informativas/auto_relevo/api/template/autorelevo_servicio_no_autorizado.html
+
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
+index 0c8ce727..86703d11 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
+@@ -1261,9 +1261,13 @@ class AutoRelevoService:
+ 
+     @staticmethod
+     def _avisar_si_autorizado(servicio, estatus_previo):
+-        autorizado = EstatusServicioEnum.SERVICIO_AUTORIZADO.value
+-        if servicio.estatus_servicio == autorizado and estatus_previo != autorizado:
++        """Notifica al titular cuando el servicio entra a «Servicio autorizado» o «No autorizado»."""
++        if servicio.estatus_servicio == estatus_previo:
++            return
++        if servicio.estatus_servicio == EstatusServicioEnum.SERVICIO_AUTORIZADO.value:
+             AutoRelevoNotificationsService.envio_mail_servicio_autorizado(servicio.id)
++        elif servicio.estatus_servicio == EstatusServicioEnum.NO_AUTORIZADO.value:
++            AutoRelevoNotificationsService.envio_mail_servicio_no_autorizado(servicio.id, servicio.razon_estatus)
+ 
+     def _aplicar_autorizacion_servicio(self, ticket_id, servicio, aprobado, comentario, aprobado_previo):
+         # Tickets que llegaron a "Vehiculo entregado" sin decisión del evaluador se autorizan tarde.
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/notifications_manager.py b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/notifications_manager.py
+index 9f8b62cd..4562deec 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/notifications_manager.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/notifications_manager.py
+@@ -91,6 +91,17 @@ class AutoRelevoNotificationsService:
+             url_micrositio=AutoRelevoNotificationsService.url_micrositio(),
+         )
+ 
++    @staticmethod
++    def envio_mail_servicio_no_autorizado(servicio_id, motivo):
++        """Avisa al titular que su servicio no fue autorizado, con el motivo capturado por el operador."""
++        AutoRelevoNotificationsService._envio_aviso_titular(
++            servicio_id,
++            "autorelevo_servicio_no_autorizado.html",
++            "AUTO RELEVO - Servicio no autorizado",
++            url_micrositio=AutoRelevoNotificationsService.url_micrositio(),
++            motivo=motivo,
++        )
++
+     @staticmethod
+     def url_micrositio():
+         """URL de entrada al micrositio del ambiente actual (misma base que el proxy de app.py)."""
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/template/autorelevo_servicio_no_autorizado.html b/apiserver/ix/boletas_informativas/auto_relevo/api/template/autorelevo_servicio_no_autorizado.html
+new file mode 100644
+index 00000000..2dc9b9e0
+--- /dev/null
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/template/autorelevo_servicio_no_autorizado.html
+@@ -0,0 +1,111 @@
++<!DOCTYPE html>
++<html lang="es">
++    <head>
++        <title>AUTO RELEVO - Servicio no autorizado</title>
++        <meta charset="UTF-8" />
++        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
++        <style>
++            @import url("https://fonts.googleapis.com/css2?family=Lato:wght@400;700&display=swap");
++
++            body {
++                font-family: "Lato", Arial, sans-serif;
++                margin: 0;
++                padding: 0;
++                background-color: #f9f9f9;
++                color: #333;
++            }
++
++            .header-title {
++                font-size: 32px;
++                font-weight: 700;
++                line-height: 1.2;
++                text-align: left;
++                padding: 20px 40px;
++                background-color: #ecb432;
++                color: white;
++            }
++
++            .alert-msg {
++                font-size: 14px;
++                line-height: 1.2;
++                text-align: left;
++                padding: 20px 40px;
++                background-color: #ececec;
++                color: black;
++            }
++
++            .content-wrapper {
++                padding: 20px 40px;
++                background-color: white;
++                margin: 20px;
++                border-radius: 8px;
++                box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
++            }
++
++            .info {
++                font-size: 18px;
++                font-weight: 400;
++                line-height: 1.5;
++                margin-bottom: 20px;
++            }
++
++            .important {
++                font-weight: 700;
++                color: #d0021b;
++            }
++
++            .btn {
++                display: inline-block;
++                padding: 12px 28px;
++                background-color: #000000;
++                color: #ffffff !important;
++                font-size: 16px;
++                font-weight: 700;
++                text-decoration: none;
++                border-radius: 4px;
++            }
++
++            .semi-footer {
++                font-size: 16px;
++                font-weight: 400;
++                line-height: 24px;
++                text-align: left;
++                margin-top: 20px;
++            }
++        </style>
++    </head>
++    <body>
++        <div class="header-title">
++            <h1>
++                AUTO RELEVO - SERVICIO NO AUTORIZADO
++                {% if numero_siniestro %}
++                    Siniestro {{ numero_siniestro }}
++                {% elif poliza %}
++                    Póliza {{ poliza }}
++                {% endif %}
++            </h1>
++        </div>
++        <div class="content-wrapper">
++            <p class="info">Buen día</p>
++
++            <p class="info">Estimado (a): {{ nombre_cliente }}</p>
++            <p class="info">
++                Le informamos que su solicitud de auto relevo <span class="important">no fue autorizada</span>.
++            </p>
++            <p class="info">
++                Motivo: {{ motivo }}
++            </p>
++            <p class="info">
++                <a class="btn" href="{{ url_micrositio }}">Ver detalle</a>
++            </p>
++            <p class="semi-footer">
++                En caso de que necesite conocer el estatus de su servicio, puede comunicarse a nuestros teléfonos y
++                uno de nuestros asesores se encargará de resolver cualquier duda o aclaración.
++            </p>
++            <p class="semi-footer">Saludos.</p>
++        </div>
++        <div class="alert-msg">
++            <p> ¡Alerta de fraude! En Chubb nunca te pediremos depósitos en cuentas que no estén a nuestro nombre ni enviaremos correos desde dominios distintos a nuestros oficiales: @chubb.com y @chubbservicios.com. Chubb no se hace responsable por operaciones realizadas fuera de estos canales.</p>
++        </div>
++    </body>
++</html>
+diff --git a/apiserver/ix/tests/auto_relevo/test_aviso_servicio_autorizado.py b/apiserver/ix/tests/auto_relevo/test_aviso_servicio_autorizado.py
+index 5cdd540a..97571107 100644
+--- a/apiserver/ix/tests/auto_relevo/test_aviso_servicio_autorizado.py
++++ b/apiserver/ix/tests/auto_relevo/test_aviso_servicio_autorizado.py
+@@ -13,7 +13,7 @@ NO_AUTORIZADO = EstatusServicioEnum.NO_AUTORIZADO.value
+ 
+ 
+ def _autorizar(actual, nuevo, aprobado=True):
+-    servicio = SimpleNamespace(id=665, estatus_servicio=actual, boleta_informativa=None)
++    servicio = SimpleNamespace(id=665, estatus_servicio=actual, boleta_informativa=None, razon_estatus="x")
+     session = MagicMock()
+     session.query.return_value.filter.return_value.first.return_value = servicio
+ 
+@@ -22,6 +22,7 @@ def _autorizar(actual, nuevo, aprobado=True):
+ 
+     with patch.object(svc, "g", SimpleNamespace(s=lambda: session)), \
+             patch.object(svc.AutoRelevoService, "_aplicar_autorizacion_servicio", aplicar), \
++            patch.object(svc.AutoRelevoNotificationsService, "envio_mail_servicio_no_autorizado"), \
+             patch.object(svc.AutoRelevoNotificationsService, "envio_mail_servicio_autorizado") as aviso:
+         svc.AutoRelevoService().registrar_autorizacion(665, {"aprobado": aprobado, "comentario": "x"})
+     return aviso
+@@ -61,3 +62,13 @@ def test_avisa_al_autorizar_desde_el_admin():
+             patch.object(svc.AutoRelevoNotificationsService, "envio_mail_servicio_autorizado") as aviso:
+         svc.AutoRelevoService().update_ticket(665, {"boleta_informativa": {"evaluador_aprobo_servicio": True}})
+     aviso.assert_called_once_with(665)
++
++
++def test_avisa_no_autorizado_con_motivo():
++    servicio = SimpleNamespace(id=665, estatus_servicio=NO_AUTORIZADO, razon_estatus="Póliza sin cobertura")
++    with patch.object(svc.AutoRelevoNotificationsService, "envio_mail_servicio_no_autorizado") as aviso, \
++            patch.object(svc.AutoRelevoNotificationsService, "envio_mail_servicio_autorizado") as autorizado:
++        svc.AutoRelevoService._avisar_si_autorizado(servicio, COMPLETA)
++        svc.AutoRelevoService._avisar_si_autorizado(servicio, NO_AUTORIZADO)
++    aviso.assert_called_once_with(665, "Póliza sin cobertura")
++    autorizado.assert_not_called()
+-- 
+2.56.1
+
