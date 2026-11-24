@@ -1,0 +1,90 @@
+From d4e8e8fa429a97aa32753f6a2511f741201cbd4e Mon Sep 17 00:00:00 2001
+From: JoshMorinDev <joshua.morinsalazar@chubb.com>
+Date: Tue, 24 Nov 2026 09:49:11 -0600
+Subject: [PATCH] =?UTF-8?q?fix(autorelevo):=20enviar=20correo=20de=20servi?=
+ =?UTF-8?q?cio=20autorizado=20tambi=C3=A9n=20al=20autorizar=20desde=20el?=
+ =?UTF-8?q?=20admin?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ .../auto_relevo_boleta_service.py              | 14 ++++++++++----
+ .../test_aviso_servicio_autorizado.py          | 18 ++++++++++++++++++
+ 2 files changed, 28 insertions(+), 4 deletions(-)
+
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
+index c688ae02..0c8ce727 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
+@@ -412,6 +412,7 @@ class AutoRelevoService:
+             
+             data_manager = AutoRelevoDataManager(g.s())
+             aprobado_previo = servicio.boleta_informativa.evaluador_aprobo_servicio if servicio.boleta_informativa else None
++            estatus_previo = servicio.estatus_servicio
+ 
+             self._update_related_entities(data_manager, servicio, payload)
+             boleta_data = payload.get("boleta_informativa") if payload else None
+@@ -425,7 +426,8 @@ class AutoRelevoService:
+             else:
+                 self._validate_status_flow(ticket_id)
+             g.s().commit()
+-            
++            self._avisar_si_autorizado(servicio, estatus_previo)
++
+             return self.get_ticket_detail(ticket_id)
+ 
+         except SQLAlchemyError as e:
+@@ -1247,9 +1249,7 @@ class AutoRelevoService:
+             estatus_previo = servicio.estatus_servicio
+             self._aplicar_autorizacion_servicio(ticket_id, servicio, aprobado, comentario, aprobado_previo)
+             g.s().commit()
+-            autorizado = EstatusServicioEnum.SERVICIO_AUTORIZADO.value
+-            if servicio.estatus_servicio == autorizado and estatus_previo != autorizado:
+-                AutoRelevoNotificationsService.envio_mail_servicio_autorizado(ticket_id)
++            self._avisar_si_autorizado(servicio, estatus_previo)
+ 
+             logging.info("[autorelevo] autorización ticket=%s aprobado=%s comentario=%r", ticket_id, aprobado, comentario)
+             return {
+@@ -1259,6 +1259,12 @@ class AutoRelevoService:
+         except SQLAlchemyError as e:
+             self._handle_error(str(e), ERROR_BD, 500)
+ 
++    @staticmethod
++    def _avisar_si_autorizado(servicio, estatus_previo):
++        autorizado = EstatusServicioEnum.SERVICIO_AUTORIZADO.value
++        if servicio.estatus_servicio == autorizado and estatus_previo != autorizado:
++            AutoRelevoNotificationsService.envio_mail_servicio_autorizado(servicio.id)
++
+     def _aplicar_autorizacion_servicio(self, ticket_id, servicio, aprobado, comentario, aprobado_previo):
+         # Tickets que llegaron a "Vehiculo entregado" sin decisión del evaluador se autorizan tarde.
+         autorizacion_tardia = (
+diff --git a/apiserver/ix/tests/auto_relevo/test_aviso_servicio_autorizado.py b/apiserver/ix/tests/auto_relevo/test_aviso_servicio_autorizado.py
+index 14752313..5cdd540a 100644
+--- a/apiserver/ix/tests/auto_relevo/test_aviso_servicio_autorizado.py
++++ b/apiserver/ix/tests/auto_relevo/test_aviso_servicio_autorizado.py
+@@ -43,3 +43,21 @@ def test_url_micrositio_por_ambiente(monkeypatch):
+     monkeypatch.setenv("GAE_APP_ID", "morfeo-test")
+     assert svc.AutoRelevoNotificationsService.url_micrositio() == \
+         "https://micrositio-autorelevo-web-dot-morfeo-test.ue.r.appspot.com/autorelevo/"
++
++
++def test_avisa_al_autorizar_desde_el_admin():
++    servicio = SimpleNamespace(id=665, estatus_servicio=COMPLETA,
++                               boleta_informativa=SimpleNamespace(evaluador_aprobo_servicio=None))
++
++    def aplicar(_self, *_args):
++        servicio.estatus_servicio = AUTORIZADO
++
++    with patch.object(svc, "g", SimpleNamespace(s=MagicMock)), \
++            patch.object(svc, "AutoRelevoDataManager"), \
++            patch.object(svc.AutoRelevoService, "_fetch_servicio_with_relations", return_value=servicio), \
++            patch.object(svc.AutoRelevoService, "_update_related_entities"), \
++            patch.object(svc.AutoRelevoService, "_aplicar_autorizacion_servicio", aplicar), \
++            patch.object(svc.AutoRelevoService, "get_ticket_detail"), \
++            patch.object(svc.AutoRelevoNotificationsService, "envio_mail_servicio_autorizado") as aviso:
++        svc.AutoRelevoService().update_ticket(665, {"boleta_informativa": {"evaluador_aprobo_servicio": True}})
++    aviso.assert_called_once_with(665)
+-- 
+2.56.1
+
