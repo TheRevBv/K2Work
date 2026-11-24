@@ -1,0 +1,187 @@
+From 22ddb6793cb430fa2c3d557825fa70e4dc26b3e4 Mon Sep 17 00:00:00 2001
+From: JoshMorinDev <joshua.morinsalazar@chubb.com>
+Date: Tue, 24 Nov 2026 12:24:49 -0600
+Subject: [PATCH 1/2] fix(autorelevo): cerrar el folio al no autorizar el
+ servicio
+
+---
+ .../relevo-car/list/list.component.html       | 10 +----
+ .../relevo-car/list/list.component.ts         |  5 +++
+ .../auto_relevo_boleta_service.py             | 16 ++++++--
+ .../auto_relevo/api/utils/constants.py        |  3 ++
+ .../auto_relevo/test_folio_no_autorizado.py   | 39 +++++++++++++++++++
+ 5 files changed, 62 insertions(+), 11 deletions(-)
+ create mode 100644 apiserver/ix/tests/auto_relevo/test_folio_no_autorizado.py
+
+diff --git a/admin/src/app/app-modules/relevo-car/list/list.component.html b/admin/src/app/app-modules/relevo-car/list/list.component.html
+index 5c56b614..16c67cdc 100644
+--- a/admin/src/app/app-modules/relevo-car/list/list.component.html
++++ b/admin/src/app/app-modules/relevo-car/list/list.component.html
+@@ -163,10 +163,7 @@
+                         }}
+                       </td>
+                       <td>
+-                        @if (
+-                          rowData.ServicioAutoRelevo.estatus_servicio !==
+-                          "Finalizado"
+-                        ) {
++                        @if (!isClosed(rowData)) {
+                           <button
+                             class="btn btn-primary"
+                             (click)="goToForm(rowData)"
+@@ -174,10 +171,7 @@
+                             {{ "Continue" | translate }}
+                           </button>
+                         }
+-                        @if (
+-                          rowData.ServicioAutoRelevo.estatus_servicio ===
+-                          "Finalizado"
+-                        ) {
++                        @if (isClosed(rowData)) {
+                           <button
+                             class="btn btn-secondary"
+                             (click)="showDetail(rowData)"
+diff --git a/admin/src/app/app-modules/relevo-car/list/list.component.ts b/admin/src/app/app-modules/relevo-car/list/list.component.ts
+index 5d520318..dfde6844 100644
+--- a/admin/src/app/app-modules/relevo-car/list/list.component.ts
++++ b/admin/src/app/app-modules/relevo-car/list/list.component.ts
+@@ -140,6 +140,11 @@ export class ListComponent implements OnInit, OnDestroy {
+     }
+ 
+ 
++    /** Folios cerrados: solo se consultan, ya no se continúan. */
++    isClosed(row: RelevoTicketFormModel): boolean {
++        return ['Finalizado', 'Cancelado', 'No autorizado'].includes(row?.ServicioAutoRelevo?.estatus_servicio);
++    }
++
+     showDetail(data: RelevoTicketFormModel) {
+         this.showDetailModal = true;
+         this.detailTicket = data;
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
+index 86703d11..e23e6661 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
+@@ -20,7 +20,7 @@ import logging
+ from ix.config import config
+ import json
+ from ix.boletas_informativas.auto_relevo.api.utils.constants import (
+-    EstatusServicioEnum, ESTATUS_SIN_RECALCULO, ESTATUS_AUTORIZADOS, ESTATUS_AUTORIZABLES
++    EstatusServicioEnum, ESTATUS_SIN_RECALCULO, ESTATUS_AUTORIZADOS, ESTATUS_AUTORIZABLES, ESTATUS_BLOQUEADOS
+ )
+ 
+ ERROR_BD = "Error en la base de datos"
+@@ -409,7 +409,8 @@ class AutoRelevoService:
+ 
+             servicio = self._fetch_servicio_with_relations(ticket_id)
+             self._validate_service_exists(servicio, ticket_id)
+-            
++            self._validate_folio_editable(servicio)
++
+             data_manager = AutoRelevoDataManager(g.s())
+             aprobado_previo = servicio.boleta_informativa.evaluador_aprobo_servicio if servicio.boleta_informativa else None
+             estatus_previo = servicio.estatus_servicio
+@@ -454,6 +455,7 @@ class AutoRelevoService:
+         try:
+             servicio = g.s().query(ServicioAutoRelevo).filter(ServicioAutoRelevo.id == ticket_id).first()
+             self._validate_service_exists(servicio, ticket_id)
++            self._validate_folio_editable(servicio)
+ 
+             if "estatus_servicio" in payload:
+                 servicio.estatus_servicio = payload["estatus_servicio"]
+@@ -500,7 +502,7 @@ class AutoRelevoService:
+             ).filter(ServicioAutoRelevo.id == ticket_id).first()
+             self._validate_service_exists(servicio, ticket_id)
+             
+-            if servicio.estatus_servicio in ['Finalizado', 'Cancelado']:
++            if servicio.estatus_servicio in ESTATUS_SIN_RECALCULO:
+                 self._handle_error(
+                     f"El ticket {ticket_id} ya está en estado '{servicio.estatus_servicio}'",
+                     ERROR_INVALID, 400, rollback=False
+@@ -1259,6 +1261,13 @@ class AutoRelevoService:
+         except SQLAlchemyError as e:
+             self._handle_error(str(e), ERROR_BD, 500)
+ 
++    def _validate_folio_editable(self, servicio):
++        if servicio.estatus_servicio in ESTATUS_BLOQUEADOS:
++            self._handle_error(
++                f"El ticket {servicio.id} está en '{servicio.estatus_servicio}' y ya no admite cambios",
++                ERROR_INVALID, 400, rollback=False
++            )
++
+     @staticmethod
+     def _avisar_si_autorizado(servicio, estatus_previo):
+         """Notifica al titular cuando el servicio entra a «Servicio autorizado» o «No autorizado»."""
+@@ -1283,6 +1292,7 @@ class AutoRelevoService:
+         if not (autorizacion_tardia and aprobado):
+             nuevo = EstatusServicioEnum.SERVICIO_AUTORIZADO if aprobado else EstatusServicioEnum.NO_AUTORIZADO
+             AutoRelevoDataManager(g.s()).update_status_servicio_auto_relevo(ticket_id, nuevo.value)
++            self._sync_event_status(servicio)
+ 
+         boleta = servicio.boleta_informativa
+         # razon_estatus es el motivo del servicio para el admin y el motivo de rechazo para el micrositio.
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/utils/constants.py b/apiserver/ix/boletas_informativas/auto_relevo/api/utils/constants.py
+index 4c489492..214d2ff0 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/utils/constants.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/utils/constants.py
+@@ -22,6 +22,8 @@ ESTATUS_SIN_RECALCULO = {
+     EstatusServicioEnum.CANCELADO.value,
+     EstatusServicioEnum.NO_AUTORIZADO.value,
+ }
++# Folios cerrados sin uso: ya no aceptan cambios; el asegurado abre una solicitud nueva.
++ESTATUS_BLOQUEADOS = {EstatusServicioEnum.CANCELADO.value, EstatusServicioEnum.NO_AUTORIZADO.value}
+ ESTATUS_AUTORIZADOS = {EstatusServicioEnum.AUTORIZADO.value, EstatusServicioEnum.SERVICIO_AUTORIZADO.value}
+ ESTATUS_AUTORIZABLES = {EstatusServicioEnum.DOCUMENTACION_COMPLETA.value, EstatusServicioEnum.DOCUMENTOS_ENTREGADOS.value}
+     
+@@ -54,3 +56,4 @@ LIMIT_THREADS_FOR_REPORTS = 2
+ 
+ # Tamaño máximo por archivo según el PRD (10 MB)
+ TAMANO_MAXIMO_ARCHIVO = 10 * 1024 * 1024
++
+diff --git a/apiserver/ix/tests/auto_relevo/test_folio_no_autorizado.py b/apiserver/ix/tests/auto_relevo/test_folio_no_autorizado.py
+new file mode 100644
+index 00000000..089cc898
+--- /dev/null
++++ b/apiserver/ix/tests/auto_relevo/test_folio_no_autorizado.py
+@@ -0,0 +1,39 @@
++"""Un folio «No autorizado» queda cerrado: libera el evento y no admite más cambios."""
++from types import SimpleNamespace
++from unittest.mock import MagicMock, patch
++
++import pytest
++
++from ix.api.errors import ApiError
++from ix.boletas_informativas.auto_relevo.api.auto_relevo_boleta import auto_relevo_boleta_service as svc
++from ix.boletas_informativas.auto_relevo.api.auto_relevo_boleta.auto_relevo_boleta_models import EstatusServicioEnum
++
++COMPLETA = EstatusServicioEnum.DOCUMENTACION_COMPLETA.value
++NO_AUTORIZADO = EstatusServicioEnum.NO_AUTORIZADO.value
++CANCELADO = EstatusServicioEnum.CANCELADO.value
++
++
++def test_no_autorizar_libera_el_evento():
++    servicio = SimpleNamespace(id=7, estatus_servicio=COMPLETA, siniestro_id=99, boleta_informativa=None,
++                               razon_estatus=None)
++    manager = MagicMock()
++    manager.update_status_servicio_auto_relevo.side_effect = \
++        lambda _id, estatus: setattr(servicio, "estatus_servicio", estatus)
++    eventos = MagicMock()
++    g = SimpleNamespace(s=MagicMock, current_user=SimpleNamespace(id=1))
++    with patch.object(svc, "g", g), patch.object(svc, "AutoRelevoDataManager", return_value=manager), \
++            patch.object(svc, "AutoRelevoEventsManager", return_value=eventos):
++        svc.AutoRelevoService()._aplicar_autorizacion_servicio(7, servicio, False, "Sin cobertura", None)
++    assert servicio.estatus_servicio == NO_AUTORIZADO
++    eventos.release.assert_called_once_with(99)
++
++
++@pytest.mark.parametrize("estatus", [NO_AUTORIZADO, CANCELADO])
++def test_folio_cerrado_rechaza_cambios(estatus):
++    servicio = SimpleNamespace(id=7, estatus_servicio=estatus)
++    with patch.object(svc, "g", SimpleNamespace(s=MagicMock)), \
++            patch.object(svc.AutoRelevoService, "_fetch_servicio_with_relations", return_value=servicio), \
++            patch.object(svc.AutoRelevoService, "_update_related_entities") as actualizar:
++        with pytest.raises(ApiError):
++            svc.AutoRelevoService().update_ticket(7, {"boleta_informativa": {"evaluador_aprobo_servicio": True}})
++    actualizar.assert_not_called()
+-- 
+2.56.1
+

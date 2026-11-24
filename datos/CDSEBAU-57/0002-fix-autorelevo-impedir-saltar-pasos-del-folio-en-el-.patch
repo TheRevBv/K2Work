@@ -1,0 +1,408 @@
+From 6197e5aa93eb856717802de4992c003cff2a302d Mon Sep 17 00:00:00 2001
+From: JoshMorinDev <joshua.morinsalazar@chubb.com>
+Date: Tue, 24 Nov 2026 12:25:00 -0600
+Subject: [PATCH 2/2] fix(autorelevo): impedir saltar pasos del folio en el
+ admin y en el API
+
+---
+ .../relevo-car/relevo-car.routes.ts           |  7 ++
+ .../relevo-car/steps/relevo-steps.spec.ts     | 40 +++++++++++
+ .../relevo-car/steps/relevo-steps.ts          | 56 ++++++++++++++++
+ .../relevo-car/steps/steps.component.ts       | 15 +++++
+ .../auto_relevo_boleta_service.py             | 36 +++++++++-
+ .../auto_relevo/api/utils/constants.py        | 16 +++++
+ .../ix/tests/auto_relevo/test_orden_pasos.py  | 66 +++++++++++++++++++
+ 7 files changed, 235 insertions(+), 1 deletion(-)
+ create mode 100644 admin/src/app/app-modules/relevo-car/steps/relevo-steps.spec.ts
+ create mode 100644 admin/src/app/app-modules/relevo-car/steps/relevo-steps.ts
+ create mode 100644 apiserver/ix/tests/auto_relevo/test_orden_pasos.py
+
+diff --git a/admin/src/app/app-modules/relevo-car/relevo-car.routes.ts b/admin/src/app/app-modules/relevo-car/relevo-car.routes.ts
+index 88de6a2c..07388a6a 100644
+--- a/admin/src/app/app-modules/relevo-car/relevo-car.routes.ts
++++ b/admin/src/app/app-modules/relevo-car/relevo-car.routes.ts
+@@ -1,3 +1,4 @@
++import { pasoRelevoGuard } from './steps/relevo-steps';
+ import { Routes } from '@angular/router';
+ 
+ export const reveloCarRoutes: Routes = [
+@@ -13,6 +14,7 @@ export const reveloCarRoutes: Routes = [
+     children: [
+       {
+         path: 'owner-data',
++        canActivate: [pasoRelevoGuard],
+         loadComponent: () =>
+           import('./owner-data-form/owner-data-form.component').then(
+             (m) => m.OwnerDataFormComponent,
+@@ -20,6 +22,7 @@ export const reveloCarRoutes: Routes = [
+       },
+       {
+         path: 'reason',
++        canActivate: [pasoRelevoGuard],
+         loadComponent: () =>
+           import('./reason-data-form/reason-data-form.component').then(
+             (m) => m.ReasonDataFormComponent,
+@@ -27,6 +30,7 @@ export const reveloCarRoutes: Routes = [
+       },
+       {
+         path: 'documents',
++        canActivate: [pasoRelevoGuard],
+         loadComponent: () =>
+           import('./documents-data-form/documents-data-form.component').then(
+             (m) => m.DocumentsDataFormComponent,
+@@ -34,6 +38,7 @@ export const reveloCarRoutes: Routes = [
+       },
+       {
+         path: 'authorization',
++        canActivate: [pasoRelevoGuard],
+         loadComponent: () =>
+           import('./authorization-data-form/authorization-data-form.component').then(
+             (m) => m.AuthorizationDataFormComponent,
+@@ -41,6 +46,7 @@ export const reveloCarRoutes: Routes = [
+       },
+       {
+         path: 'assignment',
++        canActivate: [pasoRelevoGuard],
+         loadComponent: () =>
+           import('./assignment-data-form/assignment-data-form.component').then(
+             (m) => m.AssignmentDataFormComponent,
+@@ -48,6 +54,7 @@ export const reveloCarRoutes: Routes = [
+       },
+       {
+         path: 'followup',
++        canActivate: [pasoRelevoGuard],
+         loadComponent: () =>
+           import('./follow-up-data-form/follow-up-data-form.component').then(
+             (m) => m.FollowUpDataFormComponent,
+diff --git a/admin/src/app/app-modules/relevo-car/steps/relevo-steps.spec.ts b/admin/src/app/app-modules/relevo-car/steps/relevo-steps.spec.ts
+new file mode 100644
+index 00000000..b18d5ef4
+--- /dev/null
++++ b/admin/src/app/app-modules/relevo-car/steps/relevo-steps.spec.ts
+@@ -0,0 +1,40 @@
++import { pasoActual, pasoPermitido } from './relevo-steps';
++
++const completo = (): any => ({
++    DatosTitular: { nombre_completo: 'Ana', telefono_contacto: '5555555555', correo_electronico: 'a@b.com' },
++    UbicacionTitular: { estado: 9, municipio: 'X', codigo_postal: '01000' },
++    ServicioAutoRelevo: { razon_estatus: 'Pérdida parcial' },
++    DocumentosValidacion: [{ estatus_validacion: 'Aprobado' }],
++    BoletaInformativa: {
++        fecha_autorizacion_siniestro: '2026-11-24', tiempo_autorizacion_valuacion: 1, fecha_asignacion_auto: '2026-11-24',
++        tiempo_asignacion: 1, evaluador_aprobo_servicio: true, fecha_entrega_vehiculo: '2026-11-25', total_dias_journey: 5,
++    },
++    VehiculoAsignado: { modelo_vehiculo: 'Aveo', total_dias_uso_vehiculo: 5, restante_dias: 0 },
++});
++
++describe('relevo-steps', () => {
++    it('folio nuevo solo abre titular', () => {
++        expect(pasoPermitido({} as any, 'owner-data')).toBeTrue();
++        expect(pasoPermitido({} as any, 'reason')).toBeFalse();
++        expect(pasoActual({} as any)).toBe('owner-data');
++    });
++
++    it('no salta documentos pendientes', () => {
++        const t = completo();
++        t.DocumentosValidacion = [{ estatus_validacion: 'Rechazado' }];
++        expect(pasoPermitido(t, 'authorization')).toBeFalse();
++        expect(pasoActual(t)).toBe('documents');
++    });
++
++    it('autorización en No bloquea asignación y seguimiento', () => {
++        const t = completo();
++        t.BoletaInformativa.evaluador_aprobo_servicio = false;
++        expect(pasoPermitido(t, 'assignment')).toBeFalse();
++        expect(pasoPermitido(t, 'followup')).toBeFalse();
++        expect(pasoActual(t)).toBe('authorization');
++    });
++
++    it('folio completo llega a seguimiento', () => {
++        expect(pasoActual(completo())).toBe('followup');
++    });
++});
+diff --git a/admin/src/app/app-modules/relevo-car/steps/relevo-steps.ts b/admin/src/app/app-modules/relevo-car/steps/relevo-steps.ts
+new file mode 100644
+index 00000000..f034576d
+--- /dev/null
++++ b/admin/src/app/app-modules/relevo-car/steps/relevo-steps.ts
+@@ -0,0 +1,56 @@
++import { inject } from '@angular/core';
++import { CanActivateFn, Router } from '@angular/router';
++import { RelevoTicketFormModel } from 'src/app/app-models/api/relevo/relevo_ticket_form.model';
++import { RelevoStoreService } from 'src/app/app-store/services/relevo.store.service';
++
++/** Pasos del folio de autorelevo en el orden en que se capturan (= path de la ruta hija). */
++export const PASOS_RELEVO = ['owner-data', 'reason', 'documents', 'authorization', 'assignment', 'followup'] as const;
++export type PasoRelevo = typeof PASOS_RELEVO[number];
++
++const COMPLETO: Record<PasoRelevo, (t: RelevoTicketFormModel) => boolean> = {
++    'owner-data': (t) => {
++        const d = t?.DatosTitular;
++        const u = t?.UbicacionTitular;
++        return !!(d?.nombre_completo && d?.telefono_contacto && d?.correo_electronico && u?.estado && u?.municipio && u?.codigo_postal);
++    },
++    'reason': (t) => !!(t?.ServicioAutoRelevo?.razon_estatus || (t?.VehiculoAsignado?.reembolso && t?.VehiculoAsignado?.motivo_reembolso)),
++    'documents': (t) => {
++        const docs = t?.DocumentosValidacion ?? [];
++        return docs.length > 0 && docs.every((d) => d.estatus_validacion === 'Aprobado');
++    },
++    'authorization': (t) => {
++        const b = t?.BoletaInformativa;
++        return !!(b?.fecha_autorizacion_siniestro && b?.tiempo_autorizacion_valuacion && b?.fecha_asignacion_auto && b?.tiempo_asignacion)
++            && typeof b?.evaluador_aprobo_servicio === 'boolean';
++    },
++    'assignment': (t) => {
++        const b = t?.BoletaInformativa;
++        return !!(b?.fecha_entrega_vehiculo && b?.tiempo_asignacion !== null && b?.total_dias_journey && t?.VehiculoAsignado?.modelo_vehiculo);
++    },
++    'followup': (t) => !!(t?.VehiculoAsignado?.total_dias_uso_vehiculo && t?.VehiculoAsignado?.restante_dias !== null),
++};
++
++export function pasoCompleto(ticket: RelevoTicketFormModel, paso: PasoRelevo): boolean {
++    return COMPLETO[paso](ticket);
++}
++
++/** Un paso se abre si todos los anteriores están completos; asignación y seguimiento exigen la autorización en «Sí». */
++export function pasoPermitido(ticket: RelevoTicketFormModel, paso: PasoRelevo): boolean {
++    const anteriores = PASOS_RELEVO.slice(0, PASOS_RELEVO.indexOf(paso));
++    if (!anteriores.every((p) => pasoCompleto(ticket, p))) return false;
++    if (paso === 'assignment' || paso === 'followup') return ticket?.BoletaInformativa?.evaluador_aprobo_servicio === true;
++    return true;
++}
++
++/** Paso más avanzado al que el folio puede entrar hoy. */
++export function pasoActual(ticket: RelevoTicketFormModel): PasoRelevo {
++    return [...PASOS_RELEVO].reverse().find((p) => pasoPermitido(ticket, p)) ?? 'owner-data';
++}
++
++export const pasoRelevoGuard: CanActivateFn = (route) => {
++    const router = inject(Router);
++    const ticket = inject(RelevoStoreService).getRelevoCreatedTicket();
++    if (!ticket) return router.parseUrl('/admin/relevo-car');
++    const paso = route.routeConfig?.path as PasoRelevo;
++    return pasoPermitido(ticket, paso) || router.parseUrl(`/admin/relevo-car/steps/${pasoActual(ticket)}`);
++};
+diff --git a/admin/src/app/app-modules/relevo-car/steps/steps.component.ts b/admin/src/app/app-modules/relevo-car/steps/steps.component.ts
+index 50dff989..40ca5fac 100644
+--- a/admin/src/app/app-modules/relevo-car/steps/steps.component.ts
++++ b/admin/src/app/app-modules/relevo-car/steps/steps.component.ts
+@@ -11,6 +11,7 @@ import { ModulesEnum, ProcessResponseEnum, RelevoAuditActionsEnum, RelevoAuditMo
+ import { RelevoHelper } from 'src/app/app-helpers/relevo.helper';
+ import { RelevoTicketDatosTitularModel } from 'src/app/app-models/api/relevo/relevo_ticket_datos_titular.model';
+ import { RelevoTicketFormModel } from 'src/app/app-models/api/relevo/relevo_ticket_form.model';
++import { PasoRelevo, pasoPermitido } from './relevo-steps';
+ import { RelevoTicketFormsModel } from 'src/app/app-models/api/relevo/relevo_ticket_forms.model';
+ import { RelevoTicketUbicacionTitularModel } from 'src/app/app-models/api/relevo/relevo_ticket_ubicacion_titular.model';
+ import { FormatLocalDate } from 'src/app/app-pipes/format-local-date.pipe';
+@@ -273,18 +274,29 @@ export class StepsComponent implements OnInit, OnDestroy, AfterViewInit {
+         if (this.showOwnerData) this.changeShowOwnerData();
+     }
+ 
++    private puedeIrA(paso: PasoRelevo): boolean {
++        if (pasoPermitido(this.createdTicket, paso)) return true;
++        const motivo = paso === 'assignment' || paso === 'followup'
++            ? 'Completa los pasos anteriores; la asignación solo se habilita con la autorización en «Sí».'
++            : 'Completa y guarda los pasos anteriores antes de continuar.';
++        MessagesService.fireStaticWarningMessage('Paso no disponible', motivo);
++        return false;
++    }
++
+     goToOwnerData() {
+         this.relevoStoreService.setDocumentsButton(false)
+         this.router.navigate(['/admin/relevo-car/steps/owner-data']);
+     }
+ 
+     goToReasonData() {
++        if (!this.puedeIrA('reason')) return;
+         this.showOwnerData = false;
+         this.relevoStoreService.setDocumentsButton(false);
+         this.router.navigate(['/admin/relevo-car/steps/reason']);
+     }
+ 
+     goToDocumentsData() {
++        if (!this.puedeIrA('documents')) return;
+         this.showOwnerData = false;
+         this.relevoStoreService.toggleDocumentsButton()
+         if (!this.router.url.endsWith('documents')) {
+@@ -304,18 +316,21 @@ export class StepsComponent implements OnInit, OnDestroy, AfterViewInit {
+     }
+ 
+     goToAuthorizationData() {
++        if (!this.puedeIrA('authorization')) return;
+         this.showOwnerData = false;
+         this.relevoStoreService.setDocumentsButton(false);
+         this.router.navigate(['/admin/relevo-car/steps/authorization']);
+     }
+ 
+     goToAssignmentData() {
++        if (!this.puedeIrA('assignment')) return;
+         this.showOwnerData = false;
+         this.relevoStoreService.setDocumentsButton(false);
+         this.router.navigate(['/admin/relevo-car/steps/assignment']);
+     }
+ 
+     goToFollowUpData() {
++        if (!this.puedeIrA('followup')) return;
+         this.showOwnerData = false;
+         this.relevoStoreService.setDocumentsButton(false);
+         this.router.navigate(['/admin/relevo-car/steps/followup']);
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
+index e23e6661..3bf3ac55 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
+@@ -20,7 +20,8 @@ import logging
+ from ix.config import config
+ import json
+ from ix.boletas_informativas.auto_relevo.api.utils.constants import (
+-    EstatusServicioEnum, ESTATUS_SIN_RECALCULO, ESTATUS_AUTORIZADOS, ESTATUS_AUTORIZABLES, ESTATUS_BLOQUEADOS
++    EstatusServicioEnum, ESTATUS_SIN_RECALCULO, ESTATUS_AUTORIZADOS, ESTATUS_AUTORIZABLES, ESTATUS_BLOQUEADOS,
++    ESTATUS_POR_PASO, CAMPOS_BOLETA_POR_PASO, CAMPOS_VEHICULO_POR_PASO
+ )
+ 
+ ERROR_BD = "Error en la base de datos"
+@@ -410,6 +411,7 @@ class AutoRelevoService:
+             servicio = self._fetch_servicio_with_relations(ticket_id)
+             self._validate_service_exists(servicio, ticket_id)
+             self._validate_folio_editable(servicio)
++            self._validate_orden_pasos(servicio, payload or {})
+ 
+             data_manager = AutoRelevoDataManager(g.s())
+             aprobado_previo = servicio.boleta_informativa.evaluador_aprobo_servicio if servicio.boleta_informativa else None
+@@ -1268,6 +1270,38 @@ class AutoRelevoService:
+                 ERROR_INVALID, 400, rollback=False
+             )
+ 
++    def _validate_orden_pasos(self, servicio, payload):
++        """Rechaza datos de un paso cuyo anterior no está completo (según el estatus del folio).
++
++        Solo cuentan los valores que cambian: el admin reenvía el vehículo completo en cada guardado.
++        """
++        for paso in self._pasos_con_cambios(servicio, payload):
++            if servicio.estatus_servicio in ESTATUS_POR_PASO[paso]:
++                continue
++            # Folios previos al recálculo de estatus: basta con la documentación aprobada.
++            if paso == "autorización" and AutoRelevoDataManager(g.s()).are_all_documents_approved(servicio.id):
++                continue
++            self._handle_error(
++                f"No se puede capturar {paso} con el folio en '{servicio.estatus_servicio}'; completa el paso anterior",
++                ERROR_INVALID, 400, rollback=False
++            )
++
++    @staticmethod
++    def _pasos_con_cambios(servicio, payload):
++        boleta_data = payload.get("boleta_informativa") or {}
++        pasos = set()
++        for paso, campos in CAMPOS_BOLETA_POR_PASO.items():
++            if any(boleta_data.get(c) is not None for c in campos):
++                pasos.add(paso)
++        vehiculos_data = payload.get("vehiculos_asignados") or []
++        vehiculos = list(servicio.boleta_informativa.vehiculos_asignados) if vehiculos_data and servicio.boleta_informativa else []
++        for vehiculo_data in vehiculos_data:
++            actual = next((v for v in vehiculos if v.id == vehiculo_data.get("id")), None)
++            for paso, campos in CAMPOS_VEHICULO_POR_PASO.items():
++                if any(vehiculo_data.get(c) is not None and vehiculo_data.get(c) != getattr(actual, c, None) for c in campos):
++                    pasos.add(paso)
++        return pasos
++
+     @staticmethod
+     def _avisar_si_autorizado(servicio, estatus_previo):
+         """Notifica al titular cuando el servicio entra a «Servicio autorizado» o «No autorizado»."""
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/utils/constants.py b/apiserver/ix/boletas_informativas/auto_relevo/api/utils/constants.py
+index 214d2ff0..100d55c4 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/utils/constants.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/utils/constants.py
+@@ -57,3 +57,19 @@ LIMIT_THREADS_FOR_REPORTS = 2
+ # Tamaño máximo por archivo según el PRD (10 MB)
+ TAMANO_MAXIMO_ARCHIVO = 10 * 1024 * 1024
+ 
++
++_POST_AUTORIZACION = ESTATUS_AUTORIZADOS | {EstatusServicioEnum.VEHICULO_ENTREGADO.value, EstatusServicioEnum.FINALIZADO.value}
++# Estatus en que el PUT del admin acepta los campos de cada paso; evita capturar un paso antes que el anterior.
++ESTATUS_POR_PASO = {
++    "autorización": ESTATUS_AUTORIZABLES | _POST_AUTORIZACION,
++    "asignación": _POST_AUTORIZACION,
++    "seguimiento": {EstatusServicioEnum.VEHICULO_ENTREGADO.value, EstatusServicioEnum.FINALIZADO.value},
++}
++CAMPOS_BOLETA_POR_PASO = {
++    "autorización": ("fecha_autorizacion_siniestro", "tiempo_autorizacion_valuacion", "fecha_asignacion_auto"),
++    "asignación": ("fecha_entrega_vehiculo", "total_dias_journey"),
++}
++CAMPOS_VEHICULO_POR_PASO = {
++    "asignación": ("modelo_vehiculo", "grupo_vehiculo_id"),
++    "seguimiento": ("total_dias_uso_vehiculo", "restante_dias"),
++}
+diff --git a/apiserver/ix/tests/auto_relevo/test_orden_pasos.py b/apiserver/ix/tests/auto_relevo/test_orden_pasos.py
+new file mode 100644
+index 00000000..604a1c4d
+--- /dev/null
++++ b/apiserver/ix/tests/auto_relevo/test_orden_pasos.py
+@@ -0,0 +1,66 @@
++"""El PUT del admin no acepta datos de un paso cuyo anterior no está completo."""
++from types import SimpleNamespace
++from unittest.mock import MagicMock, patch
++
++import pytest
++
++from ix.api.errors import ApiError
++from ix.boletas_informativas.auto_relevo.api.auto_relevo_boleta import auto_relevo_boleta_service as svc
++from ix.boletas_informativas.auto_relevo.api.auto_relevo_boleta.auto_relevo_boleta_models import EstatusServicioEnum as E
++
++AUTORIZACION = {"boleta_informativa": {"fecha_autorizacion_siniestro": "2026-11-24T10:00", "tiempo_autorizacion_valuacion": 1,
++                                       "fecha_asignacion_auto": "2026-11-24T10:00", "tiempo_asignacion": 1}}
++ASIGNACION = {"boleta_informativa": {"fecha_entrega_vehiculo": "2026-11-25T10:00", "total_dias_journey": 5},
++              "vehiculos_asignados": [{"id": 1, "modelo_vehiculo": "Aveo", "grupo_vehiculo_id": 2}]}
++SEGUIMIENTO = {"vehiculos_asignados": [{"id": 1, "total_dias_uso_vehiculo": 5, "restante_dias": 0}]}
++
++
++def _validar(estatus, payload, docs_aprobados=False, vehiculo=None):
++    vehiculo = vehiculo or SimpleNamespace(id=1, modelo_vehiculo=None, grupo_vehiculo_id=None,
++                                           total_dias_uso_vehiculo=None, restante_dias=None)
++    servicio = SimpleNamespace(id=7, estatus_servicio=estatus,
++                               boleta_informativa=SimpleNamespace(vehiculos_asignados=[vehiculo]))
++    manager = MagicMock()
++    manager.are_all_documents_approved.return_value = docs_aprobados
++    with patch.object(svc, "g", SimpleNamespace(s=MagicMock)), \
++            patch.object(svc, "AutoRelevoDataManager", return_value=manager):
++        svc.AutoRelevoService()._validate_orden_pasos(servicio, payload)
++
++
++@pytest.mark.parametrize("estatus,payload", [
++    (E.EN_REVISION.value, AUTORIZACION),
++    (E.DOCUMENTACION_INCOMPLETA.value, AUTORIZACION),
++    (E.DOCUMENTACION_COMPLETA.value, ASIGNACION),
++    (E.SERVICIO_AUTORIZADO.value, SEGUIMIENTO),
++])
++def test_rechaza_paso_fuera_de_orden(estatus, payload):
++    with pytest.raises(ApiError):
++        _validar(estatus, payload)
++
++
++@pytest.mark.parametrize("estatus,payload", [
++    (E.DOCUMENTACION_COMPLETA.value, AUTORIZACION),
++    (E.SERVICIO_AUTORIZADO.value, AUTORIZACION),
++    (E.SERVICIO_AUTORIZADO.value, ASIGNACION),
++    (E.VEHICULO_ENTREGADO.value, ASIGNACION),
++    (E.VEHICULO_ENTREGADO.value, SEGUIMIENTO),
++    (E.FINALIZADO.value, SEGUIMIENTO),
++])
++def test_acepta_paso_en_orden(estatus, payload):
++    _validar(estatus, payload)
++
++
++def test_folio_viejo_con_documentos_aprobados_puede_autorizarse():
++    _validar("Pendiente", AUTORIZACION, docs_aprobados=True)
++
++
++def test_reenvio_del_vehiculo_sin_cambios_no_bloquea():
++    vehiculo = SimpleNamespace(id=1, modelo_vehiculo="Aveo", grupo_vehiculo_id=2, total_dias_uso_vehiculo=None, restante_dias=None)
++    reenvio = {"razon_estatus": "Pérdida parcial",
++               "vehiculos_asignados": [{"id": 1, "modelo_vehiculo": "Aveo", "grupo_vehiculo_id": 2, "reembolso": False}]}
++    _validar(E.EN_REVISION.value, reenvio, vehiculo=vehiculo)
++
++
++def test_motivo_y_titular_no_dependen_del_estatus():
++    _validar(E.PENDIENTE.value, {"datos_titular": {"nombre_completo": "Ana"}, "razon_estatus": "x",
++                                 "vehiculos_asignados": [{"id": 1, "reembolso": False, "motivo_reembolso": None}]})
+-- 
+2.56.1
+

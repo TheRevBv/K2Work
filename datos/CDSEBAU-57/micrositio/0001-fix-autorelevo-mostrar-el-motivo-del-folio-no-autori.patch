@@ -1,0 +1,92 @@
+From 19188039cbdf7b6d1dd10f82052e6fd0227eae5b Mon Sep 17 00:00:00 2001
+From: JoshMorinDev <joshua.morinsalazar@chubb.com>
+Date: Tue, 24 Nov 2026 12:25:04 -0600
+Subject: [PATCH] fix(autorelevo): mostrar el motivo del folio no autorizado y
+ permitir una nueva solicitud
+
+---
+ .../src/app/core/services/k2-api.service.ts      | 16 ++++++++++++++++
+ .../src/app/features/auth/otp/otp.component.ts   | 13 ++++++++++++-
+ .../estado-solicitud.component.ts                |  8 ++++++++
+ 3 files changed, 36 insertions(+), 1 deletion(-)
+
+diff --git a/autorelevo/src/app/core/services/k2-api.service.ts b/autorelevo/src/app/core/services/k2-api.service.ts
+index a351bdd..fa28265 100644
+--- a/autorelevo/src/app/core/services/k2-api.service.ts
++++ b/autorelevo/src/app/core/services/k2-api.service.ts
+@@ -340,6 +340,22 @@ export class K2ApiService {
+       );
+   }
+ 
++  /**
++   * Devuelve el ticket más reciente de la póliza solo si quedó «No autorizado»,
++   * para mostrarle al asegurado el motivo antes de iniciar otra solicitud.
++   */
++  buscarUltimoNoAutorizado(poliza: string): Observable<K2TicketResponse | null> {
++    return this.http
++      .get<{ data: K2TicketResponse[] }>(this.ticketsUrl, { params: { poliza, order: 'desc', limit: '1' } })
++      .pipe(
++        map((res) => {
++          const ultimo = res.data?.[0];
++          return ultimo?.ServicioAutoRelevo?.estatus_servicio === 'No autorizado' ? ultimo : null;
++        }),
++        catchError(() => of(null))
++      );
++  }
++
+   /**
+    * Consulta el detalle completo de un ticket, incluyendo hash_ids de documentos.
+    */
+diff --git a/autorelevo/src/app/features/auth/otp/otp.component.ts b/autorelevo/src/app/features/auth/otp/otp.component.ts
+index 06cc0b2..5ffa488 100644
+--- a/autorelevo/src/app/features/auth/otp/otp.component.ts
++++ b/autorelevo/src/app/features/auth/otp/otp.component.ts
+@@ -505,7 +505,7 @@ export class OtpComponent implements OnDestroy {
+               this.router.navigate(['/estado']);
+             }
+         } else {
+-          this.router.navigate(['/solicitud/servicio']);
++          this.mostrarNoAutorizadoOIniciar(poliza);
+         }
+       },
+       error: () => {
+@@ -515,6 +515,17 @@ export class OtpComponent implements OnDestroy {
+     });
+   }
+ 
++  private mostrarNoAutorizadoOIniciar(poliza: string): void {
++    this.k2Svc.buscarUltimoNoAutorizado(poliza).subscribe((ticket) => {
++      if (!ticket) {
++        this.router.navigate(['/solicitud/servicio']);
++        return;
++      }
++      this.solicitudSvc.setFolio(this.k2Svc.mapearFolio(ticket));
++      this.router.navigate(['/estado']);
++    });
++  }
++
+   protected resend(): void {
+     if (this.reenviando()) return;
+     this.reenviando.set(true);
+diff --git a/autorelevo/src/app/features/estado/estado-solicitud/estado-solicitud.component.ts b/autorelevo/src/app/features/estado/estado-solicitud/estado-solicitud.component.ts
+index f3fa61c..c39c583 100644
+--- a/autorelevo/src/app/features/estado/estado-solicitud/estado-solicitud.component.ts
++++ b/autorelevo/src/app/features/estado/estado-solicitud/estado-solicitud.component.ts
+@@ -132,6 +132,14 @@ import { polizaK2 } from '../../../core/utils/poliza';
+             <p class="es-fv">{{ motivoLabel() }}</p>
+           </div>
+ 
++          @if (folio()?.estatus === 'no_autorizado') {
++            <div class="es-info-block" role="status">
++              <h3 class="es-block-title">Motivo de no autorización</h3>
++              <p class="es-fv">{{ folio()?.motivoRechazo || '—' }}</p>
++              <p class="es-doc-file">Este folio ya no puede continuar. Puedes iniciar una nueva solicitud.</p>
++            </div>
++          }
++
+           <div class="es-info-block">
+             <h3 class="es-block-title">Documentos</h3>
+             <div class="es-doc-list">
+-- 
+2.56.1
+
