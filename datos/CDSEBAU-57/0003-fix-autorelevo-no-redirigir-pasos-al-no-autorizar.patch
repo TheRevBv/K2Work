@@ -1,0 +1,23 @@
+diff --git a/admin/src/app/app-modules/relevo-car/steps/steps.component.ts b/admin/src/app/app-modules/relevo-car/steps/steps.component.ts
+index 40ca5fac..b81f274f 100644
+--- a/admin/src/app/app-modules/relevo-car/steps/steps.component.ts
++++ b/admin/src/app/app-modules/relevo-car/steps/steps.component.ts
+@@ -133,7 +133,7 @@ export class StepsComponent implements OnInit, OnDestroy, AfterViewInit {
+ 
+         this.subscriptions.push(
+             this.relevoStoreService.getRelevoCreatedTicketObserbable().subscribe(result => {
+-                console.log('created ticket steps: ', result);
++                if (!result) return;
+                 this.createdTicket = { ...result };
+                 this.validateOwnerData();
+                 this.validateReasonData();
+@@ -142,7 +142,8 @@ export class StepsComponent implements OnInit, OnDestroy, AfterViewInit {
+                 this.validateAssignmentData();
+                 this.validateFollowUpData();
+ 
+-                if (this.redirectUrl) {
++                // Un folio no autorizado no avanza: authorization-data-form lo regresa a la lista.
++                if (this.redirectUrl && result.BoletaInformativa?.evaluador_aprobo_servicio !== false) {
+                     this.router.navigate([this.redirectUrl]);
+                 }
+             }),

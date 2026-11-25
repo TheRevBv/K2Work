@@ -1,0 +1,32 @@
+diff --git a/autorelevo/src/app/core/services/k2-api.service.ts b/autorelevo/src/app/core/services/k2-api.service.ts
+index c801146..c25425d 100644
+--- a/autorelevo/src/app/core/services/k2-api.service.ts
++++ b/autorelevo/src/app/core/services/k2-api.service.ts
+@@ -553,7 +553,6 @@ export class K2ApiService {
+     payload: K2ReservacionPayload,
+     ticketActual: K2TicketResponse
+   ): Observable<K2TicketUpdatePayload> {
+-    const asegurado = payload.asegurado;
+     const boleta = payload.boleta_informativa;
+     const vehiculoActual = ticketActual.VehiculoAsignado?.[0];
+ 
+@@ -571,19 +570,6 @@ export class K2ApiService {
+     return this.resolverGrupoVehiculoId(payload.vehiculo.categoria, vehiculoActual?.grupo ?? null).pipe(
+       map((grupoVehiculoId) => ({
+         boleta_informativa: boletaInformativa,
+-        datos_titular: {
+-          nombre_completo: [asegurado.nombres, asegurado.primer_apellido, asegurado.segundo_apellido]
+-            .filter(Boolean)
+-            .join(' ')
+-            .trim(),
+-          telefono_contacto: asegurado.telefono,
+-          correo_electronico: asegurado.email,
+-        },
+-        ubicacion_titular: {
+-          estado: asegurado.estado,
+-          municipio: asegurado.municipio,
+-          codigo_postal: asegurado.codigo_postal,
+-        },
+         vehiculos_asignados: [
+           {
+             id: vehiculoActual?.id,

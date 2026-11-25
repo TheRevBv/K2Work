@@ -61,3 +61,16 @@ Decisiones del usuario: el "No" es definitivo; el folio queda en "No autorizado"
 
 ### E2E
 - Bruno `bruno/Autorelevo/Flujo folio E2E (CDSEBAU-57)/` (13 requests, Run folder). Requiere el backend desplegado en la versión `micrositio-autorelevo` y que la póliza no tenga folio abierto (si no, 409).
+
+## 2026-11-25 — BUG-141F7017: tras guardar "No" se abría Entrega de documentos
+- Causa: `authorization-data-form` navega a `/admin/relevo-car` al guardar "No", pero `saveRelevoCreatedTicket` dispara la suscripción de `steps.component`, que recalcula `redirectUrl` y navega en paralelo. Al poner "No" aparece el documento "Valuación oficial por parte de Chubb" en Pendiente, así que `redirectUrl` queda en `steps/documents`.
+- Fix (admin, sin commit): `steps.component` no navega a `redirectUrl` si `evaluador_aprobo_servicio === false` e ignora el ticket `null` que emite `ngOnDestroy`. El bloqueo de edición del backend (Caso A) es la red de seguridad.
+- Prueba en dev (folio 679, póliza Q2-50027051): el primer guardado de "No" cerró el folio (`No autorizado`, `razon_estatus`=prueba). El front se quedó en Autorización y el segundo PUT respondió 400 por `_validate_folio_editable`, que es lo esperado. Falta desplegar el fix de `steps.component` para que el admin regrese a la lista.
+
+## 2026-11-25 — BUG-46EA8D91: la reserva sobrescribe los datos del titular en K2
+- Causa: `K2ApiService.mapearPayloadReservacionAK2` (micrositio) mandaba `datos_titular` y `ubicacion_titular` armados con el formulario de reserva (`payload.asegurado`) en el PUT del ticket; K2 los aplicaba sobre el titular capturado al crear el folio.
+- Fix (micrositio, sin commit): el PUT de la reserva solo manda `boleta_informativa` y `vehiculos_asignados`. El titular se fija al crear el ticket (`crearTicket`) y se edita desde el admin.
+- Los folios ya afectados en dev no se corrigen solos; hay que recapturar el titular desde el admin.
+
+## 2026-11-25 — BUG-C199D6E8: texto de contacto en la selección de OTP
+- Micrositio `canal-verificacion.component`: debajo de los botones, "Si no reconoces los medios de contacto, comunícate al 81 2000 2020" (mismo número y estilo que bienvenida). Sin commit. El número queda por confirmar ("(AR)" en el ticket).
