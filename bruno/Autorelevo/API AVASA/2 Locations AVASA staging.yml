@@ -1,0 +1,25 @@
+info:
+  name: "Locations AVASA staging"
+  type: http
+  seq: 2
+
+http:
+  method: GET
+  url: "https://rentalapi.staging.avasa.com.mx/2.0/locations/?country=MX&search=MONTERREY"
+  headers:
+    - name: "X-Api-Key"
+      value: "{{process.env.AVASA_API_KEY}}"
+  auth: none
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        test("res.getStatus() === 200", () => expect(res.getStatus() === 200).to.be.true);
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

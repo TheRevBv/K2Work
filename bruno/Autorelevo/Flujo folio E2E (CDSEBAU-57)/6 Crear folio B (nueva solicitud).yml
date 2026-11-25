@@ -1,0 +1,56 @@
+info:
+  name: "Crear folio B (nueva solicitud)"
+  type: http
+  seq: 6
+
+http:
+  method: POST
+  url: "{{baseUrl}}/api/v1/boleta-informativa/auto-relevo/tickets"
+  headers:
+    - name: "Content-Type"
+      value: "application/json"
+  body:
+    type: json
+    data: |-
+      {
+        "poliza": "{{poliza_qa}}",
+        "sinister_chubb_id": "{{siniestro_qa}}",
+        "tipo_servicio_id": 1,
+        "boleta_informativa": {
+          "motivo_servicio_id": 2
+        },
+        "datos_titular": {
+          "nombre_completo": "QA Bruno E2E",
+          "telefono_contacto": "5555555555",
+          "correo_electronico": "{{correo_qa}}"
+        },
+        "ubicacion_titular": {
+          "estado": "Ciudad de México",
+          "municipio": "Álvaro Obregón",
+          "codigo_postal": "01000"
+        }
+      }
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        test("res.getStatus() === 200", () => expect(res.getStatus() === 200).to.be.true);
+        const data = res.getBody().data;
+        bru.setVar('e2e_id', data.ServicioAutoRelevo.id);
+        bru.setVar('e2e_docs', JSON.stringify((data.DocumentosValidacion || []).map(d => d.id)));
+        const v = Array.isArray(data.VehiculoAsignado) ? data.VehiculoAsignado[0] : data.VehiculoAsignado;
+        bru.setVar('e2e_vehiculo', v ? v.id : null);
+
+docs:
+  content: |-
+    Con A no autorizado la póliza acepta una solicitud nueva.
+  type: text/markdown
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

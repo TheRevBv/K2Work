@@ -1,11 +1,20 @@
 info:
-  name: "Sin archivo"
+  name: "aprobado no booleano"
   type: http
-  seq: 6
+  seq: 5
 
 http:
   method: POST
-  url: "{{baseUrl}}/api/importador/{{layout}}"
+  url: "{{baseUrl}}/api/v1/boleta-informativa/auto-relevo/tickets/{{ticket_id}}/autorizacion"
+  headers:
+    - name: "Content-Type"
+      value: "application/json"
+  body:
+    type: json
+    data: |-
+      {
+        "aprobado": "si"
+      }
   auth: inherit
 
 runtime:

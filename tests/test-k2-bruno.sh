@@ -41,4 +41,10 @@ cat > "$TMP/spec2.json" <<'JSON'
 JSON
 mkdir -p "$TMP/c2" && "$GEN" "$TMP/spec2.json" --out "$TMP/c2" > /dev/null
 grep -q "type: json" "$TMP/c2/2 Form.yml" && bad "defaults body null no debe generar json" || ok "defaults body null"
+cat > "$TMP/spec3.json" <<'JSON'
+{"name": "P3", "host": "local", "login": false, "defaults": {"path": "/api/x", "body": null},
+ "requests": [{"name": "Externa", "method": "GET", "path": "https://ext.example/v1"}]}
+JSON
+mkdir -p "$TMP/c3" && "$GEN" "$TMP/spec3.json" --out "$TMP/c3" > /dev/null
+grep -q 'url: "https://ext.example/v1"' "$TMP/c3/1 Externa.yml" && ok "url absoluta" || bad "url absoluta"
 exit $fail

@@ -1,0 +1,43 @@
+info:
+  name: "Asignación B"
+  type: http
+  seq: 11
+
+http:
+  method: PUT
+  url: "{{baseUrl}}/api/v1/boleta-informativa/auto-relevo/tickets/{{e2e_id}}"
+  headers:
+    - name: "Content-Type"
+      value: "application/json"
+  body:
+    type: json
+    data: |-
+      {
+        "boleta_informativa": {
+          "fecha_entrega_vehiculo": "2026-11-25 10:00:00",
+          "tiempo_asignacion": 1,
+          "total_dias_journey": 5
+        },
+        "vehiculos_asignados": [
+          {
+            "id": {{e2e_vehiculo}},
+            "modelo_vehiculo": "Aveo",
+            "grupo_vehiculo_id": 1
+          }
+        ]
+      }
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        test("res.getStatus() === 200", () => expect(res.getStatus() === 200).to.be.true);
+        test("res.getBody().data.ServicioAutoRelevo.estatus_servicio === 'Vehiculo entregado'", () => expect(res.getBody().data.ServicioAutoRelevo.estatus_servicio === 'Vehiculo entregado').to.be.true);
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

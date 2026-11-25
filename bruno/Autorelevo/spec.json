@@ -1,0 +1,314 @@
+{
+ "name": "Autorelevo",
+ "host": "dev",
+ "env": "k2",
+ "login": true,
+ "user": "joshua.morinsalazar@chubb.com",
+ "variables": {
+  "layout": "avasa_contratos",
+  "ticket_id": "0",
+  "ticket_rechazo": "0"
+ },
+ "docs": "Colección única de Autorelevo. `baseUrl` = dev; para el importador sin desplegar cámbialo a `http://127.0.0.1:8080`.\n\n## Importador AVASA\nImportador genérico de K2 (`POST /api/importador/{layout}`, `GET /api/importador/layouts`). Rama `feat/autorelevo-reporte-avasa`; correr el apiserver local (apunta a dev por el proxy 3307).\n\nArchivos sintéticos en `archivos/` (contratos `ZZB*`, sin datos reales). El caso feliz **escribe en dev**: limpiar con `bin/k2-sql dev -f bruno/Autorelevo/limpiar.sql --commit` (requiere confirmación).\n\nEl 403 usa la carpeta *Sin rol*: define `K2_USER_SIN_ROL` y `K2_PASS_SIN_ROL` en `~/.config/k2work/bruno/k2.env` con un usuario sin rol admin/supervisor.\n\nErrores: `{\"error\": {\"data\": [...], \"detail\": ..., \"total_errores\": N}}`.\n\n## Servicio autorizado\nBUG-0FCE5E2C: al autorizar (`POST /api/v1/boleta-informativa/auto-relevo/tickets/{id}/autorizacion`) y pasar a 'Servicio autorizado' se envía 'AUTO RELEVO - Servicio autorizado' al correo del titular con el link al micrositio.\n\nAntes de correr: pon en `ticket_id` un folio en 'Documentación completa en espera de autorización' con TU correo como titular, y en `ticket_rechazo` otro folio en ese mismo estatus. **Escribe en dev.**\n\n## API AVASA\nRequiere `AVASA_API_KEY` en `~/.config/k2work/bruno/k2.env`.",
+ "defaults": {
+  "method": "GET",
+  "path": "/api",
+  "body": null
+ },
+ "requests": [
+  {
+   "name": "Layouts disponibles",
+   "method": "GET",
+   "path": "/api/importador/layouts",
+   "tests": [
+    "res.getStatus() === 200",
+    "res.getBody().data.some(l => l.key === 'avasa_contratos')"
+   ],
+   "body": null,
+   "folder": "Importador AVASA"
+  },
+  {
+   "name": "Caso feliz AVASA",
+   "form": [
+    {
+     "name": "file",
+     "file": "archivos/01-avasa-ok.xlsx"
+    }
+   ],
+   "tests": [
+    "res.getStatus() === 200",
+    "res.getBody().data.total === 3"
+   ],
+   "docs": "Esperado: 200, total 3 (la fila REPORT TOTAL no se carga). Segunda corrida: insertados 0, actualizados 3.",
+   "method": "POST",
+   "path": "/api/importador/{{layout}}",
+   "folder": "Importador AVASA"
+  },
+  {
+   "name": "Sin token",
+   "auth": "none",
+   "form": [
+    {
+     "name": "file",
+     "file": "archivos/01-avasa-ok.xlsx"
+    }
+   ],
+   "tests": [
+    "res.getStatus() === 401"
+   ],
+   "method": "POST",
+   "path": "/api/importador/{{layout}}",
+   "folder": "Importador AVASA"
+  },
+  {
+   "name": "Layout inexistente",
+   "path": "/api/importador/no_existe",
+   "form": [
+    {
+     "name": "file",
+     "file": "archivos/01-avasa-ok.xlsx"
+    }
+   ],
+   "tests": [
+    "res.getStatus() === 404"
+   ],
+   "method": "POST",
+   "folder": "Importador AVASA"
+  },
+  {
+   "name": "Sin archivo",
+   "tests": [
+    "res.getStatus() === 400"
+   ],
+   "method": "POST",
+   "path": "/api/importador/{{layout}}",
+   "body": null,
+   "folder": "Importador AVASA"
+  },
+  {
+   "name": "Archivo mayor a 5 MB",
+   "form": [
+    {
+     "name": "file",
+     "file": "archivos/06-grande.xlsx"
+    }
+   ],
+   "tests": [
+    "res.getStatus() === 413"
+   ],
+   "method": "POST",
+   "path": "/api/importador/{{layout}}",
+   "folder": "Importador AVASA"
+  },
+  {
+   "name": "Columnas faltantes",
+   "form": [
+    {
+     "name": "file",
+     "file": "archivos/02-sin-columnas.xlsx"
+    }
+   ],
+   "tests": [
+    "res.getStatus() === 400",
+    "res.getBody().error.data.length > 0"
+   ],
+   "method": "POST",
+   "path": "/api/importador/{{layout}}",
+   "folder": "Importador AVASA"
+  },
+  {
+   "name": "Filas inválidas",
+   "form": [
+    {
+     "name": "file",
+     "file": "archivos/03-filas-invalidas.xlsx"
+    }
+   ],
+   "tests": [
+    "res.getStatus() === 400",
+    "res.getBody().error.total_errores >= 3"
+   ],
+   "docs": "Esperado: 400 con errores por fila (número inválido, fórmula, llave duplicada, llave vacía); no escribe nada.",
+   "method": "POST",
+   "path": "/api/importador/{{layout}}",
+   "folder": "Importador AVASA"
+  },
+  {
+   "name": "Totales no cuadran",
+   "form": [
+    {
+     "name": "file",
+     "file": "archivos/04-totales-no-cuadran.xlsx"
+    }
+   ],
+   "tests": [
+    "res.getStatus() === 400"
+   ],
+   "docs": "Esperado: 400; Total del contrato difiere en 1.00.",
+   "method": "POST",
+   "path": "/api/importador/{{layout}}",
+   "folder": "Importador AVASA"
+  },
+  {
+   "name": "Sin fila de totales",
+   "form": [
+    {
+     "name": "file",
+     "file": "archivos/05-sin-fila-total.xlsx"
+    }
+   ],
+   "tests": [
+    "res.getStatus() === 400"
+   ],
+   "docs": "Esperado: 400 'El archivo no trae la fila de totales'.",
+   "method": "POST",
+   "path": "/api/importador/{{layout}}",
+   "folder": "Importador AVASA"
+  },
+  {
+   "name": "Login sin rol",
+   "path": "/api/auth/token",
+   "auth": "none",
+   "body": {
+    "email": "{{process.env.K2_USER_SIN_ROL}}",
+    "password": "{{process.env.K2_PASS_SIN_ROL}}"
+   },
+   "script": "if (res.getStatus() === 200) { bru.setVar('token_sin_rol', res.getBody().token); }",
+   "tests": [],
+   "method": "POST",
+   "folder": "Importador AVASA - Sin rol"
+  },
+  {
+   "name": "Usuario sin rol 403",
+   "auth": "none",
+   "headers": {
+    "Authorization": "Bearer {{token_sin_rol}}"
+   },
+   "form": [
+    {
+     "name": "file",
+     "file": "archivos/01-avasa-ok.xlsx"
+    }
+   ],
+   "tests": [
+    "res.getStatus() === 403"
+   ],
+   "method": "POST",
+   "path": "/api/importador/{{layout}}",
+   "folder": "Importador AVASA - Sin rol"
+  },
+  {
+   "name": "Autorizar (envía correo)",
+   "tests": [
+    "res.getStatus() === 200",
+    "res.getBody().data.estatus_servicio === 'Servicio autorizado'"
+   ],
+   "docs": "Esperado: 200 y llega el correo 'AUTO RELEVO - Servicio autorizado' con el link al micrositio.",
+   "method": "POST",
+   "path": "/api/v1/boleta-informativa/auto-relevo/tickets/{{ticket_id}}/autorizacion",
+   "body": {
+    "aprobado": true,
+    "comentario": ""
+   },
+   "folder": "Servicio autorizado (CDSEBAU-57)"
+  },
+  {
+   "name": "Re-autorizar (sin segundo correo)",
+   "tests": [
+    "res.getStatus() === 400"
+   ],
+   "docs": "Esperado: 400 porque ya no está en estatus autorizable; no llega otro correo.",
+   "method": "POST",
+   "path": "/api/v1/boleta-informativa/auto-relevo/tickets/{{ticket_id}}/autorizacion",
+   "body": {
+    "aprobado": true,
+    "comentario": ""
+   },
+   "folder": "Servicio autorizado (CDSEBAU-57)"
+  },
+  {
+   "name": "No autorizar (sin correo)",
+   "path": "/api/v1/boleta-informativa/auto-relevo/tickets/{{ticket_rechazo}}/autorizacion",
+   "body": {
+    "aprobado": false,
+    "comentario": "Prueba QA rechazo"
+   },
+   "tests": [
+    "res.getStatus() === 200",
+    "res.getBody().data.estatus_servicio === 'No autorizado'"
+   ],
+   "docs": "Esperado: 'No autorizado', sin correo de autorizado.",
+   "method": "POST",
+   "folder": "Servicio autorizado (CDSEBAU-57)"
+  },
+  {
+   "name": "Rechazo sin comentario",
+   "body": {
+    "aprobado": false,
+    "comentario": ""
+   },
+   "tests": [
+    "res.getStatus() === 400"
+   ],
+   "method": "POST",
+   "path": "/api/v1/boleta-informativa/auto-relevo/tickets/{{ticket_id}}/autorizacion",
+   "folder": "Servicio autorizado (CDSEBAU-57)"
+  },
+  {
+   "name": "aprobado no booleano",
+   "body": {
+    "aprobado": "si"
+   },
+   "tests": [
+    "res.getStatus() === 400"
+   ],
+   "method": "POST",
+   "path": "/api/v1/boleta-informativa/auto-relevo/tickets/{{ticket_id}}/autorizacion",
+   "folder": "Servicio autorizado (CDSEBAU-57)"
+  },
+  {
+   "name": "Sin token",
+   "auth": "none",
+   "tests": [
+    "res.getStatus() === 401"
+   ],
+   "method": "POST",
+   "path": "/api/v1/boleta-informativa/auto-relevo/tickets/{{ticket_id}}/autorizacion",
+   "body": {
+    "aprobado": true,
+    "comentario": ""
+   },
+   "folder": "Servicio autorizado (CDSEBAU-57)"
+  },
+  {
+   "name": "Locations AVASA test",
+   "folder": "API AVASA",
+   "method": "GET",
+   "path": "https://apitest.avasa.com.mx/2.0/locations/?country=MX&search=MONTERREY",
+   "body": null,
+   "auth": "none",
+   "headers": {
+    "X-Api-Key": "{{process.env.AVASA_API_KEY}}"
+   }
+  },
+  {
+   "name": "Locations AVASA staging",
+   "folder": "API AVASA",
+   "method": "GET",
+   "path": "https://rentalapi.staging.avasa.com.mx/2.0/locations/?country=MX&search=MONTERREY",
+   "body": null,
+   "auth": "none",
+   "headers": {
+    "X-Api-Key": "{{process.env.AVASA_API_KEY}}"
+   }
+  },
+  {
+   "name": "Locations vía proxy micrositio",
+   "folder": "API AVASA",
+   "method": "GET",
+   "path": "https://micrositio-autorelevo-web-dot-morfeo-dev-321917.ue.r.appspot.com/avasa/2.0/locations/?country=MX&search=MONTERREY",
+   "body": null,
+   "auth": "none"
+  }
+ ]
+}

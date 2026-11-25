@@ -1,0 +1,7 @@
+info:
+  name: "Servicio autorizado (CDSEBAU-57)"
+  type: folder
+  seq: 4
+
+request:
+  auth: inherit

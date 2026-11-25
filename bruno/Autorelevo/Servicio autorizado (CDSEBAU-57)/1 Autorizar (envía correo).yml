@@ -1,0 +1,38 @@
+info:
+  name: "Autorizar (envía correo)"
+  type: http
+  seq: 1
+
+http:
+  method: POST
+  url: "{{baseUrl}}/api/v1/boleta-informativa/auto-relevo/tickets/{{ticket_id}}/autorizacion"
+  headers:
+    - name: "Content-Type"
+      value: "application/json"
+  body:
+    type: json
+    data: |-
+      {
+        "aprobado": true,
+        "comentario": ""
+      }
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        test("res.getStatus() === 200", () => expect(res.getStatus() === 200).to.be.true);
+        test("res.getBody().data.estatus_servicio === 'Servicio autorizado'", () => expect(res.getBody().data.estatus_servicio === 'Servicio autorizado').to.be.true);
+
+docs:
+  content: |-
+    Esperado: 200 y llega el correo 'AUTO RELEVO - Servicio autorizado' con el link al micrositio.
+  type: text/markdown
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

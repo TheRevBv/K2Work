@@ -1,0 +1,35 @@
+info:
+  name: "Aprobar documentos B"
+  type: http
+  seq: 8
+
+http:
+  method: PUT
+  url: "{{baseUrl}}/api/v1/boleta-informativa/auto-relevo/tickets/documentos/status?ticket_id={{e2e_id}}"
+  headers:
+    - name: "Content-Type"
+      value: "application/json"
+  body:
+    type: json
+    data: |-
+      {
+        "documentos": []
+      }
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: before-request
+      code: |-
+        const ids = JSON.parse(bru.getVar('e2e_docs') || '[]');
+        req.setBody({ documentos: ids.map(id => ({ id, estatus_validacion: 'Aprobado', comentario_validacion: null })) });
+    - type: after-response
+      code: |-
+        test("res.getStatus() === 200", () => expect(res.getStatus() === 200).to.be.true);
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

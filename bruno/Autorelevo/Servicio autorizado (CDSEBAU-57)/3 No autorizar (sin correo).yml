@@ -1,0 +1,38 @@
+info:
+  name: "No autorizar (sin correo)"
+  type: http
+  seq: 3
+
+http:
+  method: POST
+  url: "{{baseUrl}}/api/v1/boleta-informativa/auto-relevo/tickets/{{ticket_rechazo}}/autorizacion"
+  headers:
+    - name: "Content-Type"
+      value: "application/json"
+  body:
+    type: json
+    data: |-
+      {
+        "aprobado": false,
+        "comentario": "Prueba QA rechazo"
+      }
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        test("res.getStatus() === 200", () => expect(res.getStatus() === 200).to.be.true);
+        test("res.getBody().data.estatus_servicio === 'No autorizado'", () => expect(res.getBody().data.estatus_servicio === 'No autorizado').to.be.true);
+
+docs:
+  content: |-
+    Esperado: 'No autorizado', sin correo de autorizado.
+  type: text/markdown
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

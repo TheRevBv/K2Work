@@ -1,0 +1,43 @@
+info:
+  name: "Seguimiento antes de entregar vehículo (400)"
+  type: http
+  seq: 10
+
+http:
+  method: PUT
+  url: "{{baseUrl}}/api/v1/boleta-informativa/auto-relevo/tickets/{{e2e_id}}"
+  headers:
+    - name: "Content-Type"
+      value: "application/json"
+  body:
+    type: json
+    data: |-
+      {
+        "vehiculos_asignados": [
+          {
+            "id": {{e2e_vehiculo}},
+            "total_dias_uso_vehiculo": 5,
+            "restante_dias": 0
+          }
+        ],
+        "send_nps": false
+      }
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        test("res.getStatus() === 400", () => expect(res.getStatus() === 400).to.be.true);
+
+docs:
+  content: |-
+    Caso B.
+  type: text/markdown
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

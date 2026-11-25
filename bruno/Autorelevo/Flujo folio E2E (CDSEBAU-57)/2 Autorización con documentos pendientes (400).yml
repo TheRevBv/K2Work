@@ -1,0 +1,43 @@
+info:
+  name: "Autorización con documentos pendientes (400)"
+  type: http
+  seq: 2
+
+http:
+  method: PUT
+  url: "{{baseUrl}}/api/v1/boleta-informativa/auto-relevo/tickets/{{e2e_id}}"
+  headers:
+    - name: "Content-Type"
+      value: "application/json"
+  body:
+    type: json
+    data: |-
+      {
+        "boleta_informativa": {
+          "fecha_autorizacion_siniestro": "2026-11-24 10:00:00",
+          "tiempo_autorizacion_valuacion": 1,
+          "fecha_asignacion_auto": "2026-11-24 10:00:00",
+          "tiempo_asignacion": 1,
+          "evaluador_aprobo_servicio": true,
+          "motivo_evaluacion_servicio": ""
+        }
+      }
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        test("res.getStatus() === 400", () => expect(res.getStatus() === 400).to.be.true);
+
+docs:
+  content: |-
+    Caso B: no deja capturar autorización antes de aprobar documentos.
+  type: text/markdown
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

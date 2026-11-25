@@ -106,7 +106,8 @@ def collection_yaml(spec: dict) -> str:
 def request_yaml(req: dict, seq: int) -> str:
     out = [f"info:\n  name: {q(req['name'])}\n  type: http\n  seq: {seq}\n", "http:"]
     out.append(f"  method: {req.get('method', 'POST').upper()}")
-    out.append(f"  url: {q('{{baseUrl}}' + req['path'])}")
+    url = req["path"] if req["path"].startswith("http") else "{{baseUrl}}" + req["path"]
+    out.append(f"  url: {q(url)}")
     headers = req.get("headers", {})
     if req.get("body") is not None:
         headers = {"Content-Type": "application/json", **headers}

@@ -1,18 +1,21 @@
 info:
-  name: "Columnas faltantes"
+  name: "Rechazo sin comentario"
   type: http
-  seq: 8
+  seq: 4
 
 http:
   method: POST
-  url: "{{baseUrl}}/api/importador/{{layout}}"
+  url: "{{baseUrl}}/api/v1/boleta-informativa/auto-relevo/tickets/{{ticket_id}}/autorizacion"
+  headers:
+    - name: "Content-Type"
+      value: "application/json"
   body:
-    type: multipart-form
-    data:
-      - name: "file"
-        type: file
-        value:
-          - "archivos/02-sin-columnas.xlsx"
+    type: json
+    data: |-
+      {
+        "aprobado": false,
+        "comentario": ""
+      }
   auth: inherit
 
 runtime:
@@ -20,7 +23,6 @@ runtime:
     - type: after-response
       code: |-
         test("res.getStatus() === 400", () => expect(res.getStatus() === 400).to.be.true);
-        test("res.getBody().error.data.length > 0", () => expect(res.getBody().error.data.length > 0).to.be.true);
 
 settings:
   encodeUrl: true

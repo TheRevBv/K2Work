@@ -1,0 +1,41 @@
+info:
+  name: "Autorizar desde admin PUT (envía correo)"
+  type: http
+  seq: 7
+
+http:
+  method: PUT
+  url: "{{baseUrl}}/api/v1/boleta-informativa/auto-relevo/tickets/{{ticket_id}}"
+  headers:
+    - name: "Content-Type"
+      value: "application/json"
+  body:
+    type: json
+    data: |-
+      {
+        "boleta_informativa": {
+          "evaluador_aprobo_servicio": true,
+          "motivo_evaluacion_servicio": ""
+        }
+      }
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        test("res.getStatus() === 200", () => expect(res.getStatus() === 200).to.be.true);
+
+docs:
+  content: |-
+    Mismo payload que manda authorization-data-form del admin (BUG-0FCE5E2C).
+    Ticket en 'Documentación completa'. Esperado: 200, estatus 'Servicio autorizado' y llega 'AUTO RELEVO - Servicio autorizado'.
+    En GCP: sin log "[autorelevo] Error enviando aviso" ni "sin correo para aviso".
+  type: text/markdown
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

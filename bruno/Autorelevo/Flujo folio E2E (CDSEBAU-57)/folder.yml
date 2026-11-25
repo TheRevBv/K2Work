@@ -1,0 +1,20 @@
+info:
+  name: "Flujo folio E2E (CDSEBAU-57)"
+  type: folder
+  seq: 5
+
+request:
+  auth: inherit
+  variables:
+    - name: poliza_qa
+      value: "Q2|50027051"
+    - name: siniestro_qa
+      value: MA26I002156
+    - name: correo_qa
+      value: joshua.morinsalazar@chubb.com
+
+docs:
+  content: |-
+    Flujo completo de un folio en orden (Run folder). **Escribe en dev** y manda correos a `correo_qa`.
+    Requiere el backend con los fixes de CDSEBAU-57 desplegado en la versión de `baseUrl`.
+  type: text/markdown

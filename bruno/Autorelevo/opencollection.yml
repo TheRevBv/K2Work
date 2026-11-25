@@ -1,0 +1,61 @@
+opencollection: 1.0.0
+
+info:
+  name: Autorelevo
+config:
+  proxy:
+    inherit: true
+    config:
+      protocol: http
+      hostname: ""
+      port: ""
+      auth:
+        username: ""
+        password: ""
+      bypassProxy: ""
+
+request:
+  auth:
+    type: bearer
+    token: "{{k2_token}}"
+  variables:
+    - name: baseUrl
+      value: https://micrositio-autorelevo-dot-morfeo-dev-321917.ue.r.appspot.com
+    - name: user
+      value: joshua.morinsalazar@chubb.com
+    - name: pass
+      value: "{{process.env.K2_PASS}}"
+    - name: layout
+      value: avasa_contratos
+    - name: ticket_id
+      value: "669"
+    - name: ticket_rechazo
+      value: "0"
+
+docs:
+  content: |-
+    Colección única de Autorelevo. `baseUrl` = dev; para el importador sin desplegar cámbialo a `http://127.0.0.1:8080`.
+
+    ## Importador AVASA
+    Importador genérico de K2 (`POST /api/importador/{layout}`, `GET /api/importador/layouts`). Rama `feat/autorelevo-reporte-avasa`; correr el apiserver local (apunta a dev por el proxy 3307).
+
+    Archivos sintéticos en `archivos/` (contratos `ZZB*`, sin datos reales). El caso feliz **escribe en dev**: limpiar con `bin/k2-sql dev -f bruno/Autorelevo/limpiar.sql --commit` (requiere confirmación).
+
+    El 403 usa la carpeta *Sin rol*: define `K2_USER_SIN_ROL` y `K2_PASS_SIN_ROL` en `~/.config/k2work/bruno/k2.env` con un usuario sin rol admin/supervisor.
+
+    Errores: `{"error": {"data": [...], "detail": ..., "total_errores": N}}`.
+
+    ## Servicio autorizado
+    BUG-0FCE5E2C: al autorizar (`POST /api/v1/boleta-informativa/auto-relevo/tickets/{id}/autorizacion`) y pasar a 'Servicio autorizado' se envía 'AUTO RELEVO - Servicio autorizado' al correo del titular con el link al micrositio.
+
+    Antes de correr: pon en `ticket_id` un folio en 'Documentación completa en espera de autorización' con TU correo como titular, y en `ticket_rechazo` otro folio en ese mismo estatus. **Escribe en dev.**
+
+    ## API AVASA
+    Requiere `AVASA_API_KEY` en `~/.config/k2work/bruno/k2.env`.
+  type: text/markdown
+bundled: false
+extensions:
+  bruno:
+    ignore:
+      - node_modules
+      - .git

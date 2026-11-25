@@ -1,25 +1,30 @@
 info:
-  name: "Layout inexistente"
+  name: "Sin fila de totales"
   type: http
-  seq: 5
+  seq: 10
 
 http:
   method: POST
-  url: "{{baseUrl}}/api/importador/no_existe"
+  url: "{{baseUrl}}/api/importador/{{layout}}"
   body:
     type: multipart-form
     data:
       - name: "file"
         type: file
         value:
-          - "archivos/01-avasa-ok.xlsx"
+          - "archivos/05-sin-fila-total.xlsx"
   auth: inherit
 
 runtime:
   scripts:
     - type: after-response
       code: |-
-        test("res.getStatus() === 404", () => expect(res.getStatus() === 404).to.be.true);
+        test("res.getStatus() === 400", () => expect(res.getStatus() === 400).to.be.true);
+
+docs:
+  content: |-
+    Esperado: 400 'El archivo no trae la fila de totales'.
+  type: text/markdown
 
 settings:
   encodeUrl: true
