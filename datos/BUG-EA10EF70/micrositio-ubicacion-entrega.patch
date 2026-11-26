@@ -14,7 +14,7 @@ index 276c17c..a5bd7d7 100644
    fechaAutorizacionSiniestro?: string | null;
 diff --git a/autorelevo/src/app/core/services/k2-api.service.spec.ts b/autorelevo/src/app/core/services/k2-api.service.spec.ts
 new file mode 100644
-index 0000000..8698498
+index 0000000..0f11b15
 --- /dev/null
 +++ b/autorelevo/src/app/core/services/k2-api.service.spec.ts
 @@ -0,0 +1,40 @@
@@ -47,9 +47,9 @@ index 0000000..8698498
 +  }
 +
 +  it('manda la ubicación de entrega en la boleta cuando el asegurado la captura', () => {
-+    const body = bodyDe({ ...titular, estadoEntrega: 'JALISCO', municipioEntrega: 'GUADALAJARA' });
++    const body = bodyDe({ ...titular, estadoEntregaId: 14, municipioEntregaId: 571 });
 +    expect(body.boleta_informativa).toEqual({
-+      motivo_servicio_id: 3, estado_entrega: 'JALISCO', municipio_entrega: 'GUADALAJARA',
++      motivo_servicio_id: 3, estado_entrega_id: 14, municipio_entrega_id: 571,
 +    });
 +    expect(body.ubicacion_titular.estado).toBe('NUEVO LEON');
 +  });
@@ -59,29 +59,55 @@ index 0000000..8698498
 +  });
 +});
 diff --git a/autorelevo/src/app/core/services/k2-api.service.ts b/autorelevo/src/app/core/services/k2-api.service.ts
-index 35a1565..360924c 100644
+index 35a1565..fbb898a 100644
 --- a/autorelevo/src/app/core/services/k2-api.service.ts
 +++ b/autorelevo/src/app/core/services/k2-api.service.ts
-@@ -51,6 +51,8 @@ export interface K2BoletaInformativa {
+@@ -5,6 +5,8 @@ import { environment } from '../../../environments/environment';
+ import { DocumentoRequerido, EstatusSolicitud, Folio, MotivoSolicitud } from '../models';
+ import { ESTATUS_CERRADOS, ESTATUS_K2 } from '../../shared/constants';
+ 
++const PAIS_MEXICO_ID = 1;
++
+ /** K2 rechazó crear el ticket (409) porque la póliza ya tiene un folio abierto. */
+ export class FolioAbiertoError extends Error {
+   constructor(public readonly ticketId: number) {
+@@ -51,6 +53,11 @@ export interface K2BoletaInformativa {
    fecha_solicitud?: string;
    fecha_actualizacion?: string;
    motivo_servicio_id?: number | null;
++  estado_entrega_id?: number | null;
++  municipio_entrega_id?: number | null;
++  /** Nombres del catálogo, los resuelve K2 a partir de los ids. */
 +  estado_entrega?: string | null;
 +  municipio_entrega?: string | null;
    fecha_recepcion_documentos?: string | null;
    fecha_autorizacion_siniestro?: string | null;
    fecha_asignacion_auto?: string | null;
-@@ -96,6 +98,9 @@ export interface TitularTicket {
+@@ -96,6 +103,15 @@ export interface TitularTicket {
    estado: string;
    municipio: string;
    codigoPostal: string;
 +  /** Dónde se requiere el auto, solo si no es la dirección de la póliza. */
-+  estadoEntrega?: string;
-+  municipioEntrega?: string;
++  estadoEntregaId?: number;
++  municipioEntregaId?: number;
++}
++
++/** Estado o municipio del catálogo de K2 (tablas state y district). */
++export interface K2CatalogoUbicacion {
++  id: number;
++  name: string;
  }
  
  export interface K2ReservacionPayload {
-@@ -333,9 +338,13 @@ export class K2ApiService {
+@@ -191,6 +207,7 @@ export class K2ApiService {
+   private token$: Observable<string | null> | null = null;
+   private motivosCache$: Observable<K2MotivoServicio[]> | null = null;
+   private gruposVehiculoCache$: Observable<K2GrupoVehiculo[]> | null = null;
++  private estadosCache$: Observable<K2CatalogoUbicacion[]> | null = null;
+ 
+   constructor(private http: HttpClient) {}
+ 
+@@ -333,9 +350,13 @@ export class K2ApiService {
    ): Observable<K2TicketResponse> {
      const body: Record<string, unknown> = { poliza, tipo_servicio_id: tipoServicioId };
      if (sinisterChubbId) body['sinister_chubb_id'] = sinisterChubbId;
@@ -89,15 +115,15 @@ index 35a1565..360924c 100644
 -      body['boleta_informativa'] = { motivo_servicio_id: motivoServicioId };
 +    const boleta: Record<string, unknown> = {};
 +    if (motivoServicioId) boleta['motivo_servicio_id'] = motivoServicioId;
-+    if (titular?.estadoEntrega && titular.municipioEntrega) {
-+      boleta['estado_entrega'] = titular.estadoEntrega;
-+      boleta['municipio_entrega'] = titular.municipioEntrega;
++    if (titular?.estadoEntregaId && titular.municipioEntregaId) {
++      boleta['estado_entrega_id'] = titular.estadoEntregaId;
++      boleta['municipio_entrega_id'] = titular.municipioEntregaId;
      }
 +    if (Object.keys(boleta).length) body['boleta_informativa'] = boleta;
      if (titular) {
        body['datos_titular'] = {
          nombre_completo:    titular.nombreCompleto,
-@@ -541,6 +550,8 @@ export class K2ApiService {
+@@ -541,6 +562,8 @@ export class K2ApiService {
        motivoRechazo:              svc?.razon_estatus ?? undefined,
        sinisterChubbId:            svc?.sinister_chubb_id ?? null,
        motivoServicioId:           boleta?.motivo_servicio_id ?? null,
@@ -106,6 +132,30 @@ index 35a1565..360924c 100644
        fechaRecepcionDocumentos:   boleta?.fecha_recepcion_documentos,
        fechaAutorizacionSiniestro: boleta?.fecha_autorizacion_siniestro,
        fechaAsignacionAuto:        boleta?.fecha_asignacion_auto,
+@@ -583,6 +606,23 @@ export class K2ApiService {
+     );
+   }
+ 
++  /** Estados de México (country 1) del catálogo de K2. */
++  getEstados(): Observable<K2CatalogoUbicacion[]> {
++    if (!this.estadosCache$) {
++      this.estadosCache$ = this.http
++        .get<K2CatalogoUbicacion[]>(`${this.base}/api/countries/${PAIS_MEXICO_ID}/states`)
++        .pipe(catchError(() => of([])), shareReplay(1));
++    }
++    return this.estadosCache$;
++  }
++
++  /** Municipios de un estado del catálogo de K2. */
++  getMunicipios(estadoId: number): Observable<K2CatalogoUbicacion[]> {
++    return this.http
++      .get<K2CatalogoUbicacion[] | null>(`${this.base}/api/countries/${estadoId}/statedistrict`)
++      .pipe(map((list) => list ?? []), catchError(() => of([])));
++  }
++
+   private getGruposVehiculo(): Observable<K2GrupoVehiculo[]> {
+     if (!this.gruposVehiculoCache$) {
+       this.gruposVehiculoCache$ = this.http
 diff --git a/autorelevo/src/app/features/estado/sucursal/sucursal.component.ts b/autorelevo/src/app/features/estado/sucursal/sucursal.component.ts
 index 1bb1396..af4abdb 100644
 --- a/autorelevo/src/app/features/estado/sucursal/sucursal.component.ts
@@ -123,10 +173,21 @@ index 1bb1396..af4abdb 100644
      this.apiSvc.getSucursales(folioId, ciudadAsegurado, estadoAsegurado).subscribe({
        next: (list) => {
 diff --git a/autorelevo/src/app/features/solicitud/captura-info/captura-info.component.ts b/autorelevo/src/app/features/solicitud/captura-info/captura-info.component.ts
-index 63ff7ae..4f23745 100644
+index 63ff7ae..c3dffc6 100644
 --- a/autorelevo/src/app/features/solicitud/captura-info/captura-info.component.ts
 +++ b/autorelevo/src/app/features/solicitud/captura-info/captura-info.component.ts
-@@ -161,6 +161,27 @@ const MOTIVO_LABELS: Record<MotivoSolicitud, string> = {
+@@ -1,8 +1,9 @@
+ import { Component, inject, signal, computed, OnInit } from '@angular/core';
++import { toSignal } from '@angular/core/rxjs-interop';
+ import { Router } from '@angular/router';
+ import { ReactiveFormsModule, FormBuilder, Validators } from '@angular/forms';
+ import { SolicitudService } from '../../../core/services/solicitud.service';
+-import { FolioAbiertoError, K2ApiService, TitularTicket } from '../../../core/services/k2-api.service';
++import { FolioAbiertoError, K2ApiService, K2CatalogoUbicacion, TitularTicket } from '../../../core/services/k2-api.service';
+ import { AuthService } from '../../../core/services/auth.service';
+ import { SidebarLayoutComponent } from '../../../shared/components/sidebar-layout/sidebar-layout.component';
+ import { FileUploadRowComponent } from '../../../shared/components/file-upload-row/file-upload-row.component';
+@@ -161,6 +162,37 @@ const MOTIVO_LABELS: Record<MotivoSolicitud, string> = {
                  </div>
                </div>
  
@@ -138,14 +199,24 @@ index 63ff7ae..4f23745 100644
 +                @if (form.controls.otraUbicacion.value) {
 +                  <div class="form-grid cols-2">
 +                    <div cbInput [label]="'Estado*'"
-+                      [errorState]="submitted1 && !form.controls.estadoEntrega.value?.trim()"
-+                      [errorMessage]="submitted1 && !form.controls.estadoEntrega.value?.trim() ? 'Campo requerido' : null">
-+                      <input id="estadoEntrega" type="text" formControlName="estadoEntrega" />
++                      [errorState]="submitted1 && !form.controls.estadoEntrega.value"
++                      [errorMessage]="submitted1 && !form.controls.estadoEntrega.value ? 'Campo requerido' : null">
++                      <select id="estadoEntrega" formControlName="estadoEntrega" (change)="cargarMunicipios()">
++                        <option [ngValue]="null">Seleccionar estado</option>
++                        @for (e of estados(); track e.id) {
++                          <option [ngValue]="e.id">{{ e.name }}</option>
++                        }
++                      </select>
 +                    </div>
 +                    <div cbInput [label]="'Municipio*'"
-+                      [errorState]="submitted1 && !form.controls.municipioEntrega.value?.trim()"
-+                      [errorMessage]="submitted1 && !form.controls.municipioEntrega.value?.trim() ? 'Campo requerido' : null">
-+                      <input id="municipioEntrega" type="text" formControlName="municipioEntrega" />
++                      [errorState]="submitted1 && !form.controls.municipioEntrega.value"
++                      [errorMessage]="submitted1 && !form.controls.municipioEntrega.value ? 'Campo requerido' : null">
++                      <select id="municipioEntrega" formControlName="municipioEntrega">
++                        <option [ngValue]="null">Seleccionar municipio</option>
++                        @for (m of municipios(); track m.id) {
++                          <option [ngValue]="m.id">{{ m.name }}</option>
++                        }
++                      </select>
 +                    </div>
 +                  </div>
 +                }
@@ -154,7 +225,7 @@ index 63ff7ae..4f23745 100644
                <div class="ci-actions">
                  <button type="button" cbButton [variant]="'ghost'" class="cb-ghost-invert" (click)="router.navigate(['/solicitud/servicio'])">
                    Regresar
-@@ -247,6 +268,7 @@ const MOTIVO_LABELS: Record<MotivoSolicitud, string> = {
+@@ -247,6 +279,7 @@ const MOTIVO_LABELS: Record<MotivoSolicitud, string> = {
  
      /* ── Form sections ─────────────────────────────────────────── */
      .ci-form-section { margin-bottom: 32px; }
@@ -162,17 +233,29 @@ index 63ff7ae..4f23745 100644
      .ci-section-title {
        font-size: 13px;
        font-weight: 700;
-@@ -388,6 +410,9 @@ export class CapturaInfoComponent implements OnInit {
+@@ -388,8 +421,21 @@ export class CapturaInfoComponent implements OnInit {
      tallerNombre:    [''],
      tallerFecha:     [''],
      tallerTelefono:  [''],
 +    otraUbicacion:    [false],
-+    estadoEntrega:    [''],
-+    municipioEntrega: [''],
++    estadoEntrega:    [null as number | null],
++    municipioEntrega: [null as number | null],
    });
  
++  protected estados = toSignal(this.k2Svc.getEstados(), { initialValue: [] });
++  protected municipios = signal<K2CatalogoUbicacion[]>([]);
++
++  protected cargarMunicipios(): void {
++    const estadoId = this.form.controls.estadoEntrega.value;
++    this.form.controls.municipioEntrega.setValue(null);
++    this.municipios.set([]);
++    if (estadoId) this.k2Svc.getMunicipios(estadoId).subscribe((list) => this.municipios.set(list));
++  }
++
    ngOnInit(): void {
-@@ -427,7 +452,7 @@ export class CapturaInfoComponent implements OnInit {
+     if (!this.motivo()) {
+       this.router.navigate(['/solicitud/servicio'], { replaceUrl: true });
+@@ -427,7 +473,7 @@ export class CapturaInfoComponent implements OnInit {
      this.submitted1 = true;
      const paso1Controls = ['nombres', 'primerApellido', 'telefono', 'email', 'municipio', 'estado', 'codigoPostal'];
      const paso1Invalid = paso1Controls.some(k => this.form.controls[k as keyof typeof this.form.controls].invalid);
@@ -181,21 +264,21 @@ index 63ff7ae..4f23745 100644
  
      this.pasoActual.set(2);
      window.scrollTo(0, 0);
-@@ -499,9 +524,18 @@ export class CapturaInfoComponent implements OnInit {
+@@ -499,9 +545,18 @@ export class CapturaInfoComponent implements OnInit {
      });
    }
  
 +  private ubicacionEntregaValida(): boolean {
 +    const v = this.form.getRawValue();
-+    return !v.otraUbicacion || (!!v.estadoEntrega?.trim() && !!v.municipioEntrega?.trim());
++    return !v.otraUbicacion || (!!v.estadoEntrega && !!v.municipioEntrega);
 +  }
 +
    private titularCapturado(): TitularTicket {
      const v = this.form.getRawValue();
      return {
 +      ...(v.otraUbicacion && {
-+        estadoEntrega:    v.estadoEntrega?.trim(),
-+        municipioEntrega: v.municipioEntrega?.trim(),
++        estadoEntregaId:    v.estadoEntrega ?? undefined,
++        municipioEntregaId: v.municipioEntrega ?? undefined,
 +      }),
        nombreCompleto: [v.nombres, v.primerApellido, v.segundoApellido].filter(Boolean).join(' ').trim(),
        telefono:       v.telefono ?? '',
