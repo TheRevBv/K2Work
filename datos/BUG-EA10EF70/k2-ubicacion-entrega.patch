@@ -1,0 +1,54 @@
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_models.py b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_models.py
+index a1cb6f7c..412bbfef 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_models.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_models.py
+@@ -59,6 +59,8 @@ class BoletaInformativa(database.Model, Base, AuditEntity):
+     evaluador_aprobo_servicio = Column(Boolean, nullable=True)
+     motivo_evaluacion_servicio = Column(Text, nullable=True)
+     motivo_activacion_servicio = Column(Text)
++    estado_entrega = Column(String(100), nullable=True)
++    municipio_entrega = Column(String(100), nullable=True)
+ 
+     vehiculos_asignados = relationship('VehiculoAsignado', backref='boleta_informativa', lazy=True)
+     servicios_auto_relevo = relationship('ServicioAutoRelevo', backref='boleta_informativa', lazy=True)
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
+index 3bf3ac55..c4a8050f 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
+@@ -741,6 +741,10 @@ class AutoRelevoService:
+             if "motivo_activacion_servicio" in boleta_data:
+                 boleta.motivo_activacion_servicio = boleta_data["motivo_activacion_servicio"]
+ 
++            for campo in ("estado_entrega", "municipio_entrega"):
++                if campo in boleta_data:
++                    setattr(boleta, campo, boleta_data[campo] or None)
++
+             if "producto" in boleta_data:
+                 boleta.product_id = boleta_data["producto"]
+ 
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_data_manager.py b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_data_manager.py
+index b84f5405..f00acacf 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_data_manager.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_data_manager.py
+@@ -83,6 +83,8 @@ class AutoRelevoDataManager:
+             tiempo_autorizacion_valuacion=boleta_data.get(Constants.AUTH_TIME, 0),
+             tiempo_asignacion=boleta_data.get(Constants.ASSIGNMENT_TIME, 0),
+             motivo_activacion_servicio=boleta_data.get("motivo_activacion_servicio"),
++            estado_entrega=boleta_data.get("estado_entrega"),
++            municipio_entrega=boleta_data.get("municipio_entrega"),
+             motivo_servicio_id=boleta_data.get("motivo_servicio_id"),
+             audit_created_at=datetime.now(timezone.utc),
+             audit_created_by=g.current_user.id
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/utils/related_models.py b/apiserver/ix/boletas_informativas/auto_relevo/api/utils/related_models.py
+index 36c7cf15..8ee584f2 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/utils/related_models.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/utils/related_models.py
+@@ -36,6 +36,8 @@ related_models = {
+         "evaluador_aprobo_servicio": True,
+         "motivo_evaluacion_servicio": True,
+         "motivo_activacion_servicio": True,
++        "estado_entrega": True,
++        "municipio_entrega": True,
+         "motivo_servicio_id":True,
+         "plan_id": True
+     },

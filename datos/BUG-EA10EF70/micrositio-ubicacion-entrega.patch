@@ -1,0 +1,202 @@
+diff --git a/autorelevo/src/app/core/models/index.ts b/autorelevo/src/app/core/models/index.ts
+index 276c17c..a5bd7d7 100644
+--- a/autorelevo/src/app/core/models/index.ts
++++ b/autorelevo/src/app/core/models/index.ts
+@@ -70,6 +70,9 @@ export interface Folio {
+   motivoRechazo?: string;
+   sinisterChubbId?: string | null;
+   motivoServicioId?: number | null;
++  // Dónde se requiere el auto si no es la dirección de la póliza
++  estadoEntrega?: string | null;
++  municipioEntrega?: string | null;
+   // Fechas de hitos del proceso K2 (para timeline)
+   fechaRecepcionDocumentos?: string | null;
+   fechaAutorizacionSiniestro?: string | null;
+diff --git a/autorelevo/src/app/core/services/k2-api.service.spec.ts b/autorelevo/src/app/core/services/k2-api.service.spec.ts
+new file mode 100644
+index 0000000..8698498
+--- /dev/null
++++ b/autorelevo/src/app/core/services/k2-api.service.spec.ts
+@@ -0,0 +1,40 @@
++import { TestBed } from '@angular/core/testing';
++import { provideHttpClient } from '@angular/common/http';
++import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
++import { K2ApiService, TitularTicket } from './k2-api.service';
++
++describe('K2ApiService.crearTicket', () => {
++  let svc: K2ApiService;
++  let http: HttpTestingController;
++  const titular: TitularTicket = {
++    nombreCompleto: 'ANA PEREZ', telefono: '8100000000', correo: 'a@b.com',
++    estado: 'NUEVO LEON', municipio: 'MONTERREY', codigoPostal: '64000',
++  };
++
++  beforeEach(() => {
++    TestBed.configureTestingModule({ providers: [provideHttpClient(), provideHttpClientTesting()] });
++    svc = TestBed.inject(K2ApiService);
++    http = TestBed.inject(HttpTestingController);
++  });
++
++  afterEach(() => http.verify());
++
++  function bodyDe(t: TitularTicket) {
++    svc.crearTicket(null, 'Q2|50027051', 1, 3, t).subscribe();
++    const req = http.expectOne((r) => r.method === 'POST' && r.url.endsWith('/tickets'));
++    req.flush({ data: {} });
++    return req.request.body;
++  }
++
++  it('manda la ubicación de entrega en la boleta cuando el asegurado la captura', () => {
++    const body = bodyDe({ ...titular, estadoEntrega: 'JALISCO', municipioEntrega: 'GUADALAJARA' });
++    expect(body.boleta_informativa).toEqual({
++      motivo_servicio_id: 3, estado_entrega: 'JALISCO', municipio_entrega: 'GUADALAJARA',
++    });
++    expect(body.ubicacion_titular.estado).toBe('NUEVO LEON');
++  });
++
++  it('no manda ubicación de entrega si el auto se requiere en la dirección de la póliza', () => {
++    expect(bodyDe(titular).boleta_informativa).toEqual({ motivo_servicio_id: 3 });
++  });
++});
+diff --git a/autorelevo/src/app/core/services/k2-api.service.ts b/autorelevo/src/app/core/services/k2-api.service.ts
+index 35a1565..360924c 100644
+--- a/autorelevo/src/app/core/services/k2-api.service.ts
++++ b/autorelevo/src/app/core/services/k2-api.service.ts
+@@ -51,6 +51,8 @@ export interface K2BoletaInformativa {
+   fecha_solicitud?: string;
+   fecha_actualizacion?: string;
+   motivo_servicio_id?: number | null;
++  estado_entrega?: string | null;
++  municipio_entrega?: string | null;
+   fecha_recepcion_documentos?: string | null;
+   fecha_autorizacion_siniestro?: string | null;
+   fecha_asignacion_auto?: string | null;
+@@ -96,6 +98,9 @@ export interface TitularTicket {
+   estado: string;
+   municipio: string;
+   codigoPostal: string;
++  /** Dónde se requiere el auto, solo si no es la dirección de la póliza. */
++  estadoEntrega?: string;
++  municipioEntrega?: string;
+ }
+ 
+ export interface K2ReservacionPayload {
+@@ -333,9 +338,13 @@ export class K2ApiService {
+   ): Observable<K2TicketResponse> {
+     const body: Record<string, unknown> = { poliza, tipo_servicio_id: tipoServicioId };
+     if (sinisterChubbId) body['sinister_chubb_id'] = sinisterChubbId;
+-    if (motivoServicioId) {
+-      body['boleta_informativa'] = { motivo_servicio_id: motivoServicioId };
++    const boleta: Record<string, unknown> = {};
++    if (motivoServicioId) boleta['motivo_servicio_id'] = motivoServicioId;
++    if (titular?.estadoEntrega && titular.municipioEntrega) {
++      boleta['estado_entrega'] = titular.estadoEntrega;
++      boleta['municipio_entrega'] = titular.municipioEntrega;
+     }
++    if (Object.keys(boleta).length) body['boleta_informativa'] = boleta;
+     if (titular) {
+       body['datos_titular'] = {
+         nombre_completo:    titular.nombreCompleto,
+@@ -541,6 +550,8 @@ export class K2ApiService {
+       motivoRechazo:              svc?.razon_estatus ?? undefined,
+       sinisterChubbId:            svc?.sinister_chubb_id ?? null,
+       motivoServicioId:           boleta?.motivo_servicio_id ?? null,
++      estadoEntrega:              boleta?.estado_entrega ?? null,
++      municipioEntrega:           boleta?.municipio_entrega ?? null,
+       fechaRecepcionDocumentos:   boleta?.fecha_recepcion_documentos,
+       fechaAutorizacionSiniestro: boleta?.fecha_autorizacion_siniestro,
+       fechaAsignacionAuto:        boleta?.fecha_asignacion_auto,
+diff --git a/autorelevo/src/app/features/estado/sucursal/sucursal.component.ts b/autorelevo/src/app/features/estado/sucursal/sucursal.component.ts
+index 1bb1396..af4abdb 100644
+--- a/autorelevo/src/app/features/estado/sucursal/sucursal.component.ts
++++ b/autorelevo/src/app/features/estado/sucursal/sucursal.component.ts
+@@ -287,8 +287,9 @@ export class SucursalComponent implements OnInit {
+       return;
+     }
+     this.carga.set('cargando');
+-    const ciudadAsegurado = this.session()?.municipio?.trim();
+-    const estadoAsegurado = this.session()?.estado?.trim();
++    // Si el asegurado pidió el auto en otra ubicación, se buscan sucursales ahí y no en la de la póliza.
++    const ciudadAsegurado = (this.folio()?.municipioEntrega ?? this.session()?.municipio)?.trim();
++    const estadoAsegurado = (this.folio()?.estadoEntrega ?? this.session()?.estado)?.trim();
+ 
+     this.apiSvc.getSucursales(folioId, ciudadAsegurado, estadoAsegurado).subscribe({
+       next: (list) => {
+diff --git a/autorelevo/src/app/features/solicitud/captura-info/captura-info.component.ts b/autorelevo/src/app/features/solicitud/captura-info/captura-info.component.ts
+index 63ff7ae..4f23745 100644
+--- a/autorelevo/src/app/features/solicitud/captura-info/captura-info.component.ts
++++ b/autorelevo/src/app/features/solicitud/captura-info/captura-info.component.ts
+@@ -161,6 +161,27 @@ const MOTIVO_LABELS: Record<MotivoSolicitud, string> = {
+                 </div>
+               </div>
+ 
++              <div class="ci-form-section">
++                <label class="ci-check">
++                  <input type="checkbox" formControlName="otraUbicacion" />
++                  ¿Necesitas el auto en otra ubicación?
++                </label>
++                @if (form.controls.otraUbicacion.value) {
++                  <div class="form-grid cols-2">
++                    <div cbInput [label]="'Estado*'"
++                      [errorState]="submitted1 && !form.controls.estadoEntrega.value?.trim()"
++                      [errorMessage]="submitted1 && !form.controls.estadoEntrega.value?.trim() ? 'Campo requerido' : null">
++                      <input id="estadoEntrega" type="text" formControlName="estadoEntrega" />
++                    </div>
++                    <div cbInput [label]="'Municipio*'"
++                      [errorState]="submitted1 && !form.controls.municipioEntrega.value?.trim()"
++                      [errorMessage]="submitted1 && !form.controls.municipioEntrega.value?.trim() ? 'Campo requerido' : null">
++                      <input id="municipioEntrega" type="text" formControlName="municipioEntrega" />
++                    </div>
++                  </div>
++                }
++              </div>
++
+               <div class="ci-actions">
+                 <button type="button" cbButton [variant]="'ghost'" class="cb-ghost-invert" (click)="router.navigate(['/solicitud/servicio'])">
+                   Regresar
+@@ -247,6 +268,7 @@ const MOTIVO_LABELS: Record<MotivoSolicitud, string> = {
+ 
+     /* ── Form sections ─────────────────────────────────────────── */
+     .ci-form-section { margin-bottom: 32px; }
++    .ci-check { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; cursor: pointer; }
+     .ci-section-title {
+       font-size: 13px;
+       font-weight: 700;
+@@ -388,6 +410,9 @@ export class CapturaInfoComponent implements OnInit {
+     tallerNombre:    [''],
+     tallerFecha:     [''],
+     tallerTelefono:  [''],
++    otraUbicacion:    [false],
++    estadoEntrega:    [''],
++    municipioEntrega: [''],
+   });
+ 
+   ngOnInit(): void {
+@@ -427,7 +452,7 @@ export class CapturaInfoComponent implements OnInit {
+     this.submitted1 = true;
+     const paso1Controls = ['nombres', 'primerApellido', 'telefono', 'email', 'municipio', 'estado', 'codigoPostal'];
+     const paso1Invalid = paso1Controls.some(k => this.form.controls[k as keyof typeof this.form.controls].invalid);
+-    if (paso1Invalid) return;
++    if (paso1Invalid || !this.ubicacionEntregaValida()) return;
+ 
+     this.pasoActual.set(2);
+     window.scrollTo(0, 0);
+@@ -499,9 +524,18 @@ export class CapturaInfoComponent implements OnInit {
+     });
+   }
+ 
++  private ubicacionEntregaValida(): boolean {
++    const v = this.form.getRawValue();
++    return !v.otraUbicacion || (!!v.estadoEntrega?.trim() && !!v.municipioEntrega?.trim());
++  }
++
+   private titularCapturado(): TitularTicket {
+     const v = this.form.getRawValue();
+     return {
++      ...(v.otraUbicacion && {
++        estadoEntrega:    v.estadoEntrega?.trim(),
++        municipioEntrega: v.municipioEntrega?.trim(),
++      }),
+       nombreCompleto: [v.nombres, v.primerApellido, v.segundoApellido].filter(Boolean).join(' ').trim(),
+       telefono:       v.telefono ?? '',
+       correo:         v.email ?? '',
