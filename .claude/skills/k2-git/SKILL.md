@@ -41,8 +41,25 @@ Autorizado sin preguntar (es local y reversible):
 
 ## Patch para la VDI
 
-Cuando el usuario pida un patch:
-1. `git format-patch -1 HEAD -o K2Work/datos/<ticket>/` (o `-N` para varios commits).
-2. En la respuesta, pegar **siempre el contenido raw** del `.patch` en un bloque ```diff```: el usuario lo copia a la VDI, no tiene acceso al archivo.
-3. Dar el comando para aplicarlo sin commit en la VDI (Windows):
-   `git apply --check <archivo>.patch` y luego `git apply --ignore-whitespace <archivo>.patch`; si no entra limpio, `git apply --3way`. Con commit: `git am`.
+La VDI no puede jalar de los repos locales: el código viaja como patch publicado en K2Work (repo público `TheRevBv/K2Work`) y se baja por raw.
+
+1. **Generar** en el repo de código, solo con lo del fix:
+   - cambios sin commit: `git diff > K2Work/datos/<ticket>/<repo>-<tema>.patch`
+   - staged: `git diff --cached > ...`
+   - commit(s) del fix: `git diff <base>..HEAD > ...` con `<base>` = el commit justo antes del fix (no `dev` si `dev` local trae commits que la VDI ya tiene o no tiene).
+   - nombre: `micrositio-<tema>.patch` o `k2-<tema>.patch`; SQL aparte como `<tema>.sql` con el rollback comentado.
+2. **Publicar** (con el sí del usuario): en K2Work `git add` **solo** `datos/<ticket>/...` y `docs/tareas/...` y revisar `git diff --cached --name-only` antes de commitear: puede haber archivos de `bruno/` ya staged con tokens (GitHub push protection rechaza el push). Commit `datos: patch <ticket> <tema>` y `git push origin main`.
+3. **Responder** con el raw y los comandos para la VDI (PowerShell), uno por repo, indicando en qué carpeta va cada patch (el de micrositio no va en K2-full-portal):
+
+   ```powershell
+   cd <carpeta del repo>
+   curl.exe --ssl-no-revoke -O https://raw.githubusercontent.com/TheRevBv/K2Work/main/datos/<ticket>/<archivo>.patch
+   git apply --check --ignore-whitespace -v <archivo>.patch
+   git apply --ignore-whitespace -v <archivo>.patch
+   Remove-Item <archivo>.patch
+   ```
+
+   - Si el raw sigue mostrando la versión vieja (caché ~5 min): agregar `?v=2` a la URL.
+   - Si falla por contexto: `git apply --ignore-whitespace --reject -v` y revisar los `.rej`; con CRLF, `--whitespace=nowarn` o `git -c core.autocrlf=true apply`.
+   - Para rehacer un patch ya aplicado: `git restore <archivos>` y borrar los archivos nuevos que creó, luego aplicar el nuevo.
+   - El SQL no se aplica con git: dar el raw y pegar el script en la respuesta.
