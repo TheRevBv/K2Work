@@ -1,0 +1,34 @@
+diff --git a/autorelevo/src/app/core/services/k2-api.service.ts b/autorelevo/src/app/core/services/k2-api.service.ts
+index 35a1565..261d631 100644
+--- a/autorelevo/src/app/core/services/k2-api.service.ts
++++ b/autorelevo/src/app/core/services/k2-api.service.ts
+@@ -51,6 +51,7 @@ export interface K2BoletaInformativa {
+   fecha_solicitud?: string;
+   fecha_actualizacion?: string;
+   motivo_servicio_id?: number | null;
++  total_dias_journey?: number | null;
+   fecha_recepcion_documentos?: string | null;
+   fecha_autorizacion_siniestro?: string | null;
+   fecha_asignacion_auto?: string | null;
+@@ -574,8 +575,6 @@ export class K2ApiService {
+           {
+             id: vehiculoActual?.id,
+             modelo_vehiculo: [payload.vehiculo.marca, payload.vehiculo.modelo].filter(Boolean).join(' ').trim(),
+-            total_dias_uso_vehiculo: diasUsoNormalizados,
+-            restante_dias: 0,
+             grupo_vehiculo_id: grupoVehiculoId ?? undefined,
+           },
+         ],
+diff --git a/autorelevo/src/app/features/estado/estado-solicitud/estado-solicitud.component.ts b/autorelevo/src/app/features/estado/estado-solicitud/estado-solicitud.component.ts
+index 5132297..eb14ff2 100644
+--- a/autorelevo/src/app/features/estado/estado-solicitud/estado-solicitud.component.ts
++++ b/autorelevo/src/app/features/estado/estado-solicitud/estado-solicitud.component.ts
+@@ -569,7 +569,7 @@ export class EstadoSolicitudComponent implements OnInit {
+       }
+     }
+ 
+-    const dias = this.boleta()?.diasAsignados ?? this.ticketDetalle()?.VehiculoAsignado?.[0]?.total_dias_uso_vehiculo;
++    const dias = this.boleta()?.diasAsignados ?? this.ticketDetalle()?.BoletaInformativa?.total_dias_journey;
+     return dias != null ? `${dias} día(s)` : '—';
+   }
+ 
