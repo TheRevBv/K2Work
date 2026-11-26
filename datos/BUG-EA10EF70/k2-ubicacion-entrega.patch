@@ -14,11 +14,70 @@ index a1cb6f7c..9f4393fa 100644
  
      vehiculos_asignados = relationship('VehiculoAsignado', backref='boleta_informativa', lazy=True)
      servicios_auto_relevo = relationship('ServicioAutoRelevo', backref='boleta_informativa', lazy=True)
+diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_routes.py b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_routes.py
+index e5f8fc96..4e296941 100644
+--- a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_routes.py
++++ b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_routes.py
+@@ -181,6 +181,20 @@ def create_motivo_servicio():
+     auto_relevo = AutoRelevoService()
+     return auto_relevo.create_motivo_servicio(data)
+ 
++@wrappers.api_resource('/v1/boleta-informativa/auto-relevo/catalogo/estados', 'GET')
++@wrappers.auth
++@wrappers.only_for(config.ADMIN, config.ASSISTANCE_ADMIN, config.SUPERVISOR,config.AUTORELEVO_ROLE)
++@wrappers.doc('Estados de México para seleccionar la ubicación de entrega')
++def list_estados_auto_relevo():
++    return AutoRelevoService().list_estados()
++
++@wrappers.api_resource('/v1/boleta-informativa/auto-relevo/catalogo/estados/<int:estado_id>/municipios', 'GET')
++@wrappers.auth
++@wrappers.only_for(config.ADMIN, config.ASSISTANCE_ADMIN, config.SUPERVISOR,config.AUTORELEVO_ROLE)
++@wrappers.doc('Municipios de un estado para seleccionar la ubicación de entrega')
++def list_municipios_auto_relevo(estado_id):
++    return AutoRelevoService().list_municipios(estado_id)
++
+ @wrappers.api_resource('/v1/boleta-informativa/auto-relevo/motivo-servicio', 'GET')
+ @wrappers.auth
+ @wrappers.only_for(config.ADMIN, config.ASSISTANCE_ADMIN, config.SUPERVISOR,config.AUTORELEVO_ROLE)
 diff --git a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
-index 3bf3ac55..b8e4a162 100644
+index 3bf3ac55..f1651fb3 100644
 --- a/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
 +++ b/apiserver/ix/boletas_informativas/auto_relevo/api/auto_relevo_boleta/auto_relevo_boleta_service.py
-@@ -741,6 +741,10 @@ class AutoRelevoService:
+@@ -6,6 +6,8 @@ from datetime import datetime, timedelta, timezone
+ from zoneinfo import ZoneInfo
+ from ix.models.sinister import Sinister
+ from ix.models.postalcodestatedistrict import PostalCodeStateDistrict
++from ix.models.countrystate import CountryState
++from ix.models.statedistrict import StateDistrict
+ from sqlalchemy.orm import joinedload, with_loader_criteria
+ from ix.boletas_informativas.auto_relevo.api.utils.related_models import related_models
+ from ix.boletas_informativas.auto_relevo.api.auto_relevo_boleta.auto_relevo_boleta_models import (
+@@ -35,6 +37,7 @@ ERROR_RECENT_SINISTER = "Siniestro reciente"
+ 
+ # Horas mínimas entre el reporte del siniestro a Chubb y la solicitud de Auto Relevo
+ HORAS_MINIMAS_SINIESTRO = 48
++PAIS_MEXICO_ID = 1
+ CHUBB_DATETIME_FORMAT = '%m/%d/%Y %I:%M:%S %p'
+ MENSAJE_SINIESTRO_RECIENTE = (
+     "Para usar el servicio de Auto Relevo tu siniestro debe tener mínimo 48 horas de haber sido reportado ante Chubb."
+@@ -570,6 +573,16 @@ class AutoRelevoService:
+         except SQLAlchemyError as e:
+             self._handle_error(str(e), ERROR_BD, 500)
+     
++    def list_estados(self):
++        """Estados de México del catálogo como opciones {value, label}, de la A a la Z."""
++        estados = g.s().query(CountryState).filter(CountryState.country == PAIS_MEXICO_ID).order_by(CountryState.name)
++        return {"data": [{"value": e.id, "label": e.name} for e in estados]}
++
++    def list_municipios(self, estado_id):
++        """Municipios de un estado del catálogo como opciones {value, label}, de la A a la Z."""
++        municipios = g.s().query(StateDistrict).filter(StateDistrict.state_id == estado_id).order_by(StateDistrict.name)
++        return {"data": [{"value": m.id, "label": m.name} for m in municipios]}
++
+     def list_motivos_servicio(self):
+         """Devuelve los motivos de servicio activos con los documentos activos que requiere cada uno."""
+         try:
+@@ -741,6 +754,10 @@ class AutoRelevoService:
              if "motivo_activacion_servicio" in boleta_data:
                  boleta.motivo_activacion_servicio = boleta_data["motivo_activacion_servicio"]
  
@@ -29,7 +88,7 @@ index 3bf3ac55..b8e4a162 100644
              if "producto" in boleta_data:
                  boleta.product_id = boleta_data["producto"]
  
-@@ -918,6 +922,12 @@ class AutoRelevoService:
+@@ -918,6 +935,12 @@ class AutoRelevoService:
              if servicio.boleta_informativa and servicio.boleta_informativa.motivo_servicio_id
              else None
          )
