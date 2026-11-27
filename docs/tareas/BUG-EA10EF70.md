@@ -15,3 +15,7 @@
 ## Pendiente
 - Ejecutar el SQL en dev **antes** de desplegar K2 (si no, SQLAlchemy falla al leer la boleta).
 - Tests de backend no corridos aquí (sin pytest local).
+
+## BUG-56B60FEE
+
+Seguimiento en `docs/tareas/BUG-56B60FEE.md`: la ubicación de entrega no se guardaba al crear el folio.
