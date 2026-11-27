@@ -5,13 +5,13 @@ info:
 
 http:
   method: GET
-  url: https://sit.latam.studiogateway.chubb.com/digital.data.middlewareservicespolicy/Policy/Detail?PolicyNumber=CE50001668
+  url: https://sit.latam.studiogateway.chubb.com/digital.data.middlewareservicespolicy/Policy/Detail?PolicyNumber=Q250027051
   headers:
     - name: apiVersion
       value: "1"
   params:
     - name: PolicyNumber
-      value: CE50001668
+      value: Q250027051
       type: query
     - name: ""
       value: ""
@@ -43,6 +43,10 @@ http:
       type: query
       description: GQ46101104
       disabled: true
+    - name: ""
+      value: ""
+      type: query
+      description: A243000760
   auth:
     type: bearer
     token: "{{chubb_sit_token}}"
