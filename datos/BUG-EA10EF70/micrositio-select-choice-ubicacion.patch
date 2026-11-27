@@ -1,0 +1,70 @@
+diff --git a/autorelevo/src/app/features/solicitud/captura-info/captura-info.component.ts b/autorelevo/src/app/features/solicitud/captura-info/captura-info.component.ts
+index 4bcbde2..c270464 100644
+--- a/autorelevo/src/app/features/solicitud/captura-info/captura-info.component.ts
++++ b/autorelevo/src/app/features/solicitud/captura-info/captura-info.component.ts
+@@ -10,6 +10,8 @@ import { FileUploadRowComponent } from '../../../shared/components/file-upload-r
+ import { CbButtonDirective } from '@chubb/ui-components/cb-button';
+ import { CbInputDirective } from '@chubb/ui-components/cb-input';
+ import { CbAlertBannerComponent } from '@chubb/ui-components/cb-alert-banner';
++import { CbSelectChoiceDirective } from '@chubb/ui-components/cb-select-choice';
++import { SelectModule } from 'primeng/select';
+ import { DocumentoRequerido, MotivoSolicitud } from '../../../core/models';
+ import { Step } from '../../../shared/components/stepper/stepper.component';
+ import { firstValueFrom } from 'rxjs';
+@@ -25,7 +27,7 @@ const MOTIVO_LABELS: Record<MotivoSolicitud, string> = {
+ @Component({
+   selector: 'app-captura-info',
+   standalone: true,
+-  imports: [ReactiveFormsModule, SidebarLayoutComponent, FileUploadRowComponent, CbButtonDirective, CbInputDirective, CbAlertBannerComponent],
++  imports: [ReactiveFormsModule, SidebarLayoutComponent, FileUploadRowComponent, CbButtonDirective, CbInputDirective, CbAlertBannerComponent, CbSelectChoiceDirective, SelectModule],
+   template: `
+     <app-sidebar-layout
+       [steps]="sidebarSteps()"
+@@ -169,25 +171,19 @@ const MOTIVO_LABELS: Record<MotivoSolicitud, string> = {
+                 </label>
+                 @if (form.controls.otraUbicacion.value) {
+                   <div class="form-grid cols-2">
+-                    <div cbInput [label]="'Estado*'"
+-                      [errorState]="submitted1 && !form.controls.estadoEntrega.value"
++                    <div [cbSelectChoice]="estadoSelect" label="Estado*"
+                       [errorMessage]="submitted1 && !form.controls.estadoEntrega.value ? 'Campo requerido' : null">
+-                      <select id="estadoEntrega" formControlName="estadoEntrega" (change)="cargarMunicipios()">
+-                        <option [ngValue]="null">Seleccionar estado</option>
+-                        @for (e of estados(); track e.value) {
+-                          <option [ngValue]="e.value">{{ e.label }}</option>
+-                        }
+-                      </select>
++                      <p-select #estadoSelect inputId="estadoEntrega" formControlName="estadoEntrega"
++                        [options]="estados()" optionLabel="label" optionValue="value"
++                        [filter]="true" filterBy="label" placeholder="Seleccionar estado"
++                        appendTo="body" (onChange)="cargarMunicipios()" />
+                     </div>
+-                    <div cbInput [label]="'Municipio*'"
+-                      [errorState]="submitted1 && !form.controls.municipioEntrega.value"
++                    <div [cbSelectChoice]="municipioSelect" label="Municipio*"
+                       [errorMessage]="submitted1 && !form.controls.municipioEntrega.value ? 'Campo requerido' : null">
+-                      <select id="municipioEntrega" formControlName="municipioEntrega">
+-                        <option [ngValue]="null">Seleccionar municipio</option>
+-                        @for (m of municipios(); track m.value) {
+-                          <option [ngValue]="m.value">{{ m.label }}</option>
+-                        }
+-                      </select>
++                      <p-select #municipioSelect inputId="municipioEntrega" formControlName="municipioEntrega"
++                        [options]="municipios()" optionLabel="label" optionValue="value"
++                        [filter]="true" filterBy="label" placeholder="Seleccionar municipio"
++                        appendTo="body" />
+                     </div>
+                   </div>
+                 }
+diff --git a/autorelevo/src/styles.scss b/autorelevo/src/styles.scss
+index f56be72..c4e1e8c 100644
+--- a/autorelevo/src/styles.scss
++++ b/autorelevo/src/styles.scss
+@@ -3,6 +3,7 @@
+ @use '@chubb/ui-components/styles/cb-icon';
+ @use '@chubb/ui-components/styles/cb-input';
+ @use '@chubb/ui-components/styles/cb-progress-tracker';
++@use '@chubb/ui-components/styles/cb-select-choice';
+ @use '@chubb/ui-components/styles/presets/tile/cb-tile';
+ 
+ // ── Chubb Publico Web — headings (@chubb/clyp-plugins fonts) ────────────────
